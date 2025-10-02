@@ -1,0 +1,23 @@
+# UI Framework
+PyQt6
+
+# API Communication
+requests
+
+# ML (YOLOv8)
+ultralytics
+opencv-python
+torch
+torchvision
+
+# Charts
+matplotlib
+
+# Utilities
+Pillow
+mss
+
+# Document Viewer Dependencies
+PyMuPDF  # For PDF viewing (also known as fitz)
+python-docx  # For DOCX viewing
+qtawesome  # For icons (if not already installed)

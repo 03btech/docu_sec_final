@@ -1,0 +1,18 @@
+# Core Server & Sessions
+fastapi[all]
+starlette-session
+itsdangerous
+
+# Database & Auth
+sqlalchemy
+asyncpg
+psycopg2-binary
+passlib[bcrypt]
+
+# ML & File Processing
+transformers
+torch
+sentencepiece
+python-docx
+PyMuPDF
+python-multipart

@@ -1,0 +1,190 @@
+/* Document Security Desktop Application Theme */
+
+/* Global Colors (for reference, not used directly in QSS) */
+/* Subtext: #6f7172 */
+/* Main Text: #0f1016 */
+/* Background: #f6f8fa */
+/* Buttons: #3cb77e */
+/* Entry Fields Background: #ffffff */
+/* Text/Icons inside Buttons: #ffffff */
+/* Icons inside Entry Fields: #6f7172 */
+/* Screen Highlights: #3cb77e */
+
+/* Main Window Background */
+QMainWindow, QWidget {
+    background-color: #f6f8fa;
+    color: #0f1016;
+}
+
+/* Labels */
+QLabel {
+    color: #0f1016;
+    font-size: 14px;
+}
+
+/* Subtext Labels (e.g., hints, secondary text) */
+QLabel[subtext="true"] {
+    color: #6f7172;
+    font-size: 12px;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #3cb77e;
+    color: #ffffff;
+    border: none;
+    border-radius: 20px; /* Pill-shaped */
+    padding: 10px 20px;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: #2a8f5f; /* Slightly darker green */
+}
+
+QPushButton:pressed {
+    background-color: #1f6b47; /* Even darker */
+}
+
+QPushButton:disabled {
+    background-color: #cccccc;
+    color: #666666;
+}
+
+/* Entry Fields (QLineEdit, QTextEdit, etc.) */
+QLineEdit, QTextEdit, QPlainTextEdit, QComboBox {
+    background-color: #ffffff;
+    color: #0f1016;
+    border: 1px solid #cccccc;
+    border-radius: 20px; /* Pill-shaped */
+    padding: 8px 12px;
+    font-size: 14px;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus, QComboBox:focus {
+    border-color: #3cb77e; /* Highlight on focus */
+    outline: none;
+}
+
+/* ComboBox Dropdown */
+QComboBox::drop-down {
+    border: none;
+    background-color: #ffffff;
+    border-radius: 20px;
+}
+
+QComboBox::down-arrow {
+    image: url(icons/down_arrow.png); /* Placeholder, replace with actual icon */
+    color: #6f7172;
+}
+
+/* Icons inside Entry Fields (e.g., search icons) */
+QLineEdit[icon="true"] {
+    /* Assuming custom widget with icon, adjust as needed */
+    padding-left: 30px; /* Space for icon */
+}
+
+/* Tables (QTableWidget, QListWidget) */
+QTableWidget, QListWidget {
+    background-color: #ffffff;
+    color: #0f1016;
+    border: 1px solid #cccccc;
+    border-radius: 8px;
+    gridline-color: #e0e0e0;
+}
+
+QTableWidget::item, QListWidget::item {
+    padding: 8px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+QTableWidget::item:selected, QListWidget::item:selected {
+    background-color: #3cb77e; /* Screen highlights */
+    color: #ffffff;
+}
+
+/* Headers */
+QHeaderView::section {
+    background-color: #f6f8fa;
+    color: #0f1016;
+    padding: 8px;
+    border: none;
+    font-weight: bold;
+}
+
+/* Scroll Bars */
+QScrollBar:vertical {
+    background-color: #f6f8fa;
+    width: 12px;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical {
+    background-color: #cccccc;
+    border-radius: 6px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background-color: #aaaaaa;
+}
+
+/* Dialogs */
+QDialog {
+    background-color: #f6f8fa;
+    color: #0f1016;
+    border-radius: 10px;
+}
+
+/* Group Boxes */
+QGroupBox {
+    font-weight: bold;
+    border: 2px solid #3cb77e;
+    border-radius: 8px;
+    margin-top: 1ex;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 5px 0 5px;
+    color: #0f1016;
+}
+
+/* Checkboxes and Radio Buttons */
+QCheckBox, QRadioButton {
+    color: #0f1016;
+}
+
+QCheckBox::indicator, QRadioButton::indicator {
+    border: 1px solid #cccccc;
+    border-radius: 4px;
+    background-color: #ffffff;
+}
+
+QCheckBox::indicator:checked, QRadioButton::indicator:checked {
+    background-color: #3cb77e;
+    border-color: #3cb77e;
+}
+
+/* Progress Bars */
+QProgressBar {
+    border: 1px solid #cccccc;
+    border-radius: 10px;
+    text-align: center;
+    background-color: #ffffff;
+}
+
+QProgressBar::chunk {
+    background-color: #3cb77e;
+    border-radius: 8px;
+}
+
+/* Tooltips */
+QToolTip {
+    background-color: #0f1016;
+    color: #ffffff;
+    border: 1px solid #cccccc;
+    border-radius: 4px;
+    padding: 4px;
+}

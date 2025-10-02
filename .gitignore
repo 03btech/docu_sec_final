@@ -1,0 +1,183 @@
+# ==========================================
+# DOCUSEC GITIGNORE
+# ==========================================
+
+# ============ EXCLUDE MARKDOWN FILES ============
+# Exclude all markdown documentation files
+*.md
+*.MD
+
+# ============ PYTHON ============
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+.github
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+
+# ============ ENVIRONMENT & SECRETS ============
+# Environment variables (IMPORTANT!)
+.env
+.env.*
+!.env.example
+
+# Secrets
+secrets/
+*.key
+*.pem
+*.secret
+
+# ============ DOCKER ============
+# Docker files
+.dockerignore
+
+# Docker volumes and data
+.docker/
+.volumes/
+postgres_data/
+uploaded_files_data/
+
+# Docker compose overrides
+docker-compose.override.yml
+
+# ============ DATABASE ============
+# SQL dumps and backups
+*.sql
+!docu_security_db.sql
+backup_*.sql
+*.dump
+*.sqlite
+*.sqlite3
+*.db
+
+# Database migrations (if not needed in repo)
+backend/migrations/*.sql
+
+# ============ UPLOADED FILES ============
+# User uploaded files
+backend/uploaded_files/*
+frontend/uploaded_files/*
+uploaded_files/*
+
+# Exclude specific file types that might be uploaded
+*.pdf
+*.docx
+*.doc
+*.xlsx
+*.xls
+*.pptx
+*.ppt
+
+# ============ MACHINE LEARNING ============
+# Large ML models (download separately)
+*.pt
+*.pth
+*.h5
+*.pkl
+*.joblib
+*.model
+backend/ml/*.pt
+frontend/ml/*.pt
+
+# ML training data
+training_data/
+datasets/
+
+# ============ IDE & EDITORS ============
+# VSCode
+.vscode/
+*.code-workspace
+
+# PyCharm
+.idea/
+*.iml
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+
+# ============ OPERATING SYSTEM ============
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+.directory
+
+# ============ LOGS ============
+# Log files
+*.log
+logs/
+*.out
+
+# ============ TEMP & CACHE ============
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+*~
+.cache/
+
+# ============ BUILD ARTIFACTS ============
+# Compiled files
+*.exe
+*.dll
+*.o
+*.obj
+
+# ============ NODE (if used) ============
+node_modules/
+package-lock.json
+npm-debug.log*
+
+# ============ MISCELLANEOUS ============
+# Backup files
+*.backup
+*.old
+
+# Test files
+test_*.py
+debug_*.py
+
+# Keep these specific files
+!README.md
+!LICENSE.md
