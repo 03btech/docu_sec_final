@@ -79,7 +79,7 @@ Write-Host "|           Setup Complete!                      |" -ForegroundColor
 Write-Host "======================================================" -ForegroundColor Green
 Write-Host ""
 
-Write-Host "✅ What's Been Set Up:" -ForegroundColor Cyan
+Write-Host " What's Been Set Up:" -ForegroundColor Cyan
 Write-Host "   1. [OK] Docker containers (Backend + Database)" -ForegroundColor Green
 Write-Host "   2. [OK] Database seeded with admin and test users" -ForegroundColor Green
 Write-Host "   3. [OK] Frontend Python environment and dependencies" -ForegroundColor Green
