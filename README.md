@@ -47,6 +47,13 @@ This will:
 
 ### 4. Run Frontend Application
 
+**Option A: Automated (Recommended)**
+```powershell
+# Automatic setup and run (creates venv, installs dependencies, runs app)
+.\run_frontend.ps1
+```
+
+**Option B: Manual Setup**
 ```powershell
 cd frontend
 python -m venv venv
@@ -54,6 +61,39 @@ python -m venv venv
 pip install -r requirements.txt
 python main.py
 ```
+
+### 🎯 Complete One-Command Setup
+
+For first-time setup, use the all-in-one script:
+```powershell
+# Sets up backend + database + frontend + seeds data in one command!
+.\setup_all.ps1
+```
+
+---
+
+## 📦 Automation Scripts Overview
+
+### Backend Scripts
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `build_docker.ps1` | Build and start Docker containers | `.\build_docker.ps1` |
+| `manage_docker.ps1` | Manage Docker services (start/stop/logs/backup) | `.\manage_docker.ps1 <command>` |
+| `seed_database.ps1` | Seed database with initial data | `.\seed_database.ps1` |
+
+### Frontend Scripts
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `run_frontend.ps1` | Setup and run frontend application | `.\run_frontend.ps1` |
+| `setup_frontend.ps1` | Setup frontend environment only | `.\setup_frontend.ps1` |
+
+### Complete Setup
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `setup_all.ps1` | Complete setup (backend + frontend + database) | `.\setup_all.ps1` |
 
 ---
 
@@ -110,6 +150,25 @@ python main.py
 
 # Show all commands
 .\manage_docker.ps1 help
+```
+
+### Frontend Management
+
+```powershell
+# Run frontend (auto-setup if needed)
+.\run_frontend.ps1
+
+# Fresh setup (recreate virtual environment)
+.\run_frontend.ps1 -Fresh
+
+# Update dependencies
+.\run_frontend.ps1 -Update
+
+# Setup only (don't run)
+.\run_frontend.ps1 -Setup
+
+# Full frontend setup wizard
+.\setup_frontend.ps1
 ```
 
 ---
@@ -344,12 +403,26 @@ docker restart docu_sec-db-1
 # Check backend is reachable
 curl http://localhost:8000
 
-# Reinstall dependencies
-cd frontend
-pip install -r requirements.txt --force-reinstall
+# Recreate virtual environment
+.\run_frontend.ps1 -Fresh
+
+# Force update dependencies
+.\run_frontend.ps1 -Update
 
 # Check Python environment
 python --version  # Should be 3.10+
+```
+
+### Quick Fixes
+
+```powershell
+# Complete rebuild (backend + frontend)
+.\build_docker.ps1 -Clean -Rebuild
+.\run_frontend.ps1 -Fresh
+
+# Just restart everything
+.\manage_docker.ps1 restart
+.\run_frontend.ps1
 ```
 
 ---
