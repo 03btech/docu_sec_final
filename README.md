@@ -25,6 +25,7 @@ cd docu_sec_final
 ```
 
 This will:
+
 - ✅ Check Docker is running
 - ✅ Create `.env` file with secure credentials
 - ✅ Build Docker images
@@ -40,6 +41,7 @@ This will:
 ```
 
 **Default Credentials:**
+
 - **Admin**: username=`admin`, password=`Admin@123`
 - **Users**: username=`john.doe` (and others), password=`User@123`
 
@@ -287,6 +289,7 @@ To run backend on one PC and frontend on another:
 ### On Frontend PC:
 
 1. Edit `frontend/api/client.py`:
+
    ```python
    self.base_url = "http://192.168.1.100:8000"  # Use backend PC's IP
    ```
@@ -356,12 +359,14 @@ python --version  # Should be 3.10+
 After running `.\seed_database.ps1`, you'll have:
 
 ### Admin Account
+
 - **Username**: `admin`
 - **Password**: `Admin@123`
 - **Email**: `admin@docusec.com`
 - **Department**: IT
 
 ### Test Users
+
 - **john.doe** (Engineering)
 - **jane.smith** (HR)
 - **bob.wilson** (Finance)
