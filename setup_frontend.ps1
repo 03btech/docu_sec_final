@@ -1,4 +1,4 @@
-# ==========================================
+﻿# ==========================================
 # DocuSec Frontend Setup Script
 # ==========================================
 # Sets up Python virtual environment and installs dependencies
@@ -7,16 +7,16 @@
 $ErrorActionPreference = "Stop"
 
 # Colors
-function Write-Header { param($msg) Write-Host "`n═══ $msg ═══" -ForegroundColor Cyan }
-function Write-Success { param($msg) Write-Host "✓ $msg" -ForegroundColor Green }
-function Write-Error-Custom { param($msg) Write-Host "✗ $msg" -ForegroundColor Red }
+function Write-Header { param($msg) Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
+function Write-Success { param($msg) Write-Host "[OK] $msg" -ForegroundColor Green }
+function Write-Error-Custom { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 function Write-Info { param($msg) Write-Host "  $msg" -ForegroundColor Yellow }
 
 Clear-Host
 Write-Host ""
-Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║     DocuSec Frontend Setup Wizard      ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "     DocuSec Frontend Setup Wizard      " -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
 
 # Check if in correct directory
 if (-not (Test-Path "frontend\main.py")) {
@@ -111,9 +111,9 @@ foreach ($package in $packages) {
     Write-Host "  [$current/$totalPackages] Installing $package..." -ForegroundColor Cyan -NoNewline
     pip install $package --quiet 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) {
-        Write-Host " ✓" -ForegroundColor Green
+        Write-Host " [OK]" -ForegroundColor Green
     } else {
-        Write-Host " ✗" -ForegroundColor Red
+        Write-Host " [ERROR]" -ForegroundColor Red
         Write-Error-Custom "Failed to install $package"
     }
 }
@@ -140,9 +140,9 @@ foreach ($test in $verificationTests.GetEnumerator()) {
     Write-Host "  Checking $($test.Key)..." -NoNewline
     $result = python -c "$($test.Value)" 2>&1
     if ($LASTEXITCODE -eq 0) {
-        Write-Host " ✓" -ForegroundColor Green
+        Write-Host " [OK]" -ForegroundColor Green
     } else {
-        Write-Host " ✗" -ForegroundColor Red
+        Write-Host " [ERROR]" -ForegroundColor Red
         Write-Info "Warning: $($test.Key) verification failed"
     }
 }
@@ -166,25 +166,25 @@ try {
         Write-Success "Backend is running (http://localhost:8000)"
     }
 } catch {
-    Write-Host "⚠ " -ForegroundColor Yellow -NoNewline
+    Write-Host "! " -ForegroundColor Yellow -NoNewline
     Write-Host "Backend is not responding" -ForegroundColor Yellow
     Write-Info "Start backend with: cd .. && .\build_docker.ps1"
 }
 
 # Display summary
 Write-Host ""
-Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║       Setup Complete! ✓                ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "==========================================" -ForegroundColor Green
+Write-Host "|       Setup Complete! [OK]                |" -ForegroundColor Green
+Write-Host "==========================================" -ForegroundColor Green
 Write-Host ""
 
-Write-Host "📦 Installation Summary:" -ForegroundColor Cyan
+Write-Host "[Packages] Installation Summary:" -ForegroundColor Cyan
 Write-Host "   Python Version:     $pythonVersion" -ForegroundColor White
 Write-Host "   Virtual Env:        $(Get-Location)\venv" -ForegroundColor White
 Write-Host "   Packages Installed: $totalPackages" -ForegroundColor White
 Write-Host ""
 
-Write-Host "🚀 Quick Start:" -ForegroundColor Cyan
+Write-Host "[Run] Quick Start:" -ForegroundColor Cyan
 Write-Host "   1. Ensure backend is running:" -ForegroundColor White
 Write-Host "      cd .. && .\build_docker.ps1" -ForegroundColor Gray
 Write-Host ""
@@ -195,12 +195,12 @@ Write-Host "   Or use the automation script:" -ForegroundColor White
 Write-Host "      cd .. && .\run_frontend.ps1" -ForegroundColor Gray
 Write-Host ""
 
-Write-Host "📝 Useful Commands:" -ForegroundColor Cyan
+Write-Host "[Note] Useful Commands:" -ForegroundColor Cyan
 Write-Host "   Activate venv:      .\venv\Scripts\Activate.ps1" -ForegroundColor White
 Write-Host "   Deactivate venv:    deactivate" -ForegroundColor White
 Write-Host "   Update packages:    pip install -r requirements.txt --upgrade" -ForegroundColor White
 Write-Host "   List packages:      pip list" -ForegroundColor White
 Write-Host ""
 
-Write-Host "✓ Frontend is ready to use!" -ForegroundColor Green
+Write-Host "[OK] Frontend is ready to use!" -ForegroundColor Green
 Write-Host ""

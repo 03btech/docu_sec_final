@@ -1,4 +1,4 @@
-# ==========================================
+﻿# ==========================================
 # DocuSec Frontend Setup & Run Script
 # ==========================================
 # Automates virtual environment setup and runs the PyQt6 frontend
@@ -13,16 +13,16 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Colors
-function Write-Step { param($msg) Write-Host "`n▶ $msg" -ForegroundColor Cyan }
-function Write-Success { param($msg) Write-Host "✓ $msg" -ForegroundColor Green }
-function Write-Error-Custom { param($msg) Write-Host "✗ $msg" -ForegroundColor Red }
+function Write-Step { param($msg) Write-Host "`n>> $msg" -ForegroundColor Cyan }
+function Write-Success { param($msg) Write-Host "[OK] $msg" -ForegroundColor Green }
+function Write-Error-Custom { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 function Write-Info { param($msg) Write-Host "  $msg" -ForegroundColor Yellow }
 
 # Banner
 Clear-Host
-Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║    DocuSec Frontend Automation         ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "    DocuSec Frontend Automation         " -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
 
 # Check if we're in the right directory
 if (-not (Test-Path "frontend")) {
@@ -132,7 +132,7 @@ try {
         Write-Success "Backend is running (http://localhost:8000)"
     }
 } catch {
-    Write-Host "⚠ " -ForegroundColor Yellow -NoNewline
+    Write-Host "! " -ForegroundColor Yellow -NoNewline
     Write-Host "Backend is not responding!" -ForegroundColor Yellow
     Write-Info "Make sure Docker containers are running: .\build_docker.ps1"
     Write-Host ""
@@ -145,11 +145,11 @@ try {
 # Exit if setup-only mode
 if ($Setup) {
     Write-Host ""
-    Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Green
-    Write-Host "║         Setup Complete! ✓              ║" -ForegroundColor Green
-    Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Green
+    Write-Host "==========================================" -ForegroundColor Green
+    Write-Host "|         Setup Complete! [OK]              |" -ForegroundColor Green
+    Write-Host "==========================================" -ForegroundColor Green
     Write-Host ""
-    Write-Host "📝 Next steps:" -ForegroundColor Cyan
+    Write-Host "[Note] Next steps:" -ForegroundColor Cyan
     Write-Host "   1. Ensure backend is running: cd .. && .\build_docker.ps1" -ForegroundColor White
     Write-Host "   2. Run frontend: python main.py" -ForegroundColor White
     Write-Host ""
@@ -158,9 +158,9 @@ if ($Setup) {
 
 # Run the application
 Write-Host ""
-Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║      Starting Frontend Application     ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "==========================================" -ForegroundColor Green
+Write-Host "|      Starting Frontend Application     |" -ForegroundColor Green
+Write-Host "==========================================" -ForegroundColor Green
 Write-Host ""
 
 Write-Info "Press Ctrl+C to stop the application"

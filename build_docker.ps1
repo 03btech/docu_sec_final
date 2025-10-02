@@ -1,4 +1,4 @@
-# ==========================================
+﻿# ==========================================
 # DocuSec Docker Build Automation Script
 # ==========================================
 # Quick script to build and start Docker containers
@@ -15,16 +15,16 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Colors for output
-function Write-Step { param($msg) Write-Host "`n▶ $msg" -ForegroundColor Cyan }
-function Write-Success { param($msg) Write-Host "✓ $msg" -ForegroundColor Green }
-function Write-Error-Custom { param($msg) Write-Host "✗ $msg" -ForegroundColor Red }
+function Write-Step { param($msg) Write-Host "`n>> $msg" -ForegroundColor Cyan }
+function Write-Success { param($msg) Write-Host "[OK] $msg" -ForegroundColor Green }
+function Write-Error-Custom { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
 function Write-Info { param($msg) Write-Host "  $msg" -ForegroundColor Yellow }
 
 # Banner
 Clear-Host
-Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║   DocuSec Docker Build Automation     ║" -ForegroundColor Cyan
-Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "   DocuSec Docker Build Automation     " -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
 
 # Check if Docker is running
 Write-Step "Checking Docker status..."
@@ -147,9 +147,9 @@ for ($i = 1; $i -le 10; $i++) {
 }
 
 if ($dbHealthy) {
-    Write-Host " ✓" -ForegroundColor Green
+    Write-Host " [OK]" -ForegroundColor Green
 } else {
-    Write-Host " ⏳ (still starting)" -ForegroundColor Yellow
+    Write-Host " ... (still starting)" -ForegroundColor Yellow
 }
 
 # Check backend health
@@ -168,25 +168,25 @@ for ($i = 1; $i -le 15; $i++) {
 }
 
 if ($backendHealthy) {
-    Write-Host " ✓" -ForegroundColor Green
+    Write-Host " [OK]" -ForegroundColor Green
 } else {
-    Write-Host " ⏳ (still starting)" -ForegroundColor Yellow
+    Write-Host " ... (still starting)" -ForegroundColor Yellow
 }
 
 # Display status
 Write-Host ""
-Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "║          Build Complete! ✓             ║" -ForegroundColor Green
-Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "==========================================" -ForegroundColor Green
+Write-Host "|          Build Complete! [OK]             |" -ForegroundColor Green
+Write-Host "==========================================" -ForegroundColor Green
 Write-Host ""
 
-Write-Host "🌐 Services:" -ForegroundColor Cyan
+Write-Host "[Network] Services:" -ForegroundColor Cyan
 Write-Host "   Backend API:     http://localhost:8000" -ForegroundColor White
 Write-Host "   API Docs:        http://localhost:8000/docs" -ForegroundColor White
 Write-Host "   Database:        localhost:5432" -ForegroundColor White
 Write-Host ""
 
-Write-Host "📊 Container Status:" -ForegroundColor Cyan
+Write-Host "[Status] Container Status:" -ForegroundColor Cyan
 docker-compose ps
 Write-Host ""
 
@@ -198,14 +198,14 @@ $localIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
 } | Select-Object -First 1).IPAddress
 
 if ($localIP) {
-    Write-Host "🔗 Network Access:" -ForegroundColor Cyan
+    Write-Host "[Link] Network Access:" -ForegroundColor Cyan
     Write-Host "   This PC:         $localIP" -ForegroundColor Yellow
     Write-Host "   API URL:         http://${localIP}:8000" -ForegroundColor Yellow
     Write-Host "   (Update frontend/api/client.py with this URL)" -ForegroundColor Gray
     Write-Host ""
 }
 
-Write-Host "📝 Useful Commands:" -ForegroundColor Cyan
+Write-Host "[Note] Useful Commands:" -ForegroundColor Cyan
 Write-Host "   View logs:       .\build_docker.ps1 -Logs" -ForegroundColor White
 Write-Host "   Stop all:        .\build_docker.ps1 -Stop" -ForegroundColor White
 Write-Host "   Check status:    .\build_docker.ps1 -Status" -ForegroundColor White
@@ -220,4 +220,4 @@ if ($Logs) {
     docker-compose logs -f
 }
 
-Write-Host "✓ Ready for development!" -ForegroundColor Green
+Write-Host "[OK] Ready for development!" -ForegroundColor Green

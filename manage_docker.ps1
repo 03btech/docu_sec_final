@@ -1,4 +1,4 @@
-# ==========================================
+﻿# ==========================================
 # DocuSec Docker Management Script
 # ==========================================
 # Comprehensive management script for Docker operations
@@ -13,17 +13,17 @@ param(
 $ErrorActionPreference = "Stop"
 
 # Colors
-function Write-Header { param($msg) Write-Host "`n═══ $msg ═══" -ForegroundColor Cyan }
-function Write-Success { param($msg) Write-Host "✓ $msg" -ForegroundColor Green }
-function Write-Error-Custom { param($msg) Write-Host "✗ $msg" -ForegroundColor Red }
-function Write-Info { param($msg) Write-Host "ℹ $msg" -ForegroundColor Yellow }
+function Write-Header { param($msg) Write-Host "`n=== $msg ===" -ForegroundColor Cyan }
+function Write-Success { param($msg) Write-Host "[OK] $msg" -ForegroundColor Green }
+function Write-Error-Custom { param($msg) Write-Host "[ERROR] $msg" -ForegroundColor Red }
+function Write-Info { param($msg) Write-Host "[INFO] $msg" -ForegroundColor Yellow }
 
 # Banner
 function Show-Banner {
     Write-Host ""
-    Write-Host "╔════════════════════════════════════════╗" -ForegroundColor Cyan
-    Write-Host "║     DocuSec Docker Manager v1.0        ║" -ForegroundColor Cyan
-    Write-Host "╚════════════════════════════════════════╝" -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
+    Write-Host "     DocuSec Docker Manager v1.0        " -ForegroundColor Cyan
+    Write-Host "========================================" -ForegroundColor Cyan
     Write-Host ""
 }
 
@@ -116,9 +116,9 @@ switch ($Command) {
         Write-Host "Database:    " -NoNewline
         $dbHealth = docker inspect --format='{{.State.Health.Status}}' docu_sec-db-1 2>$null
         if ($dbHealth -eq "healthy") {
-            Write-Host "✓ Healthy" -ForegroundColor Green
+            Write-Host "[OK] Healthy" -ForegroundColor Green
         } else {
-            Write-Host "✗ $dbHealth" -ForegroundColor Red
+            Write-Host "[ERROR] $dbHealth" -ForegroundColor Red
         }
         
         # Check backend
@@ -126,10 +126,10 @@ switch ($Command) {
         try {
             $response = Invoke-WebRequest -Uri "http://localhost:8000/" -TimeoutSec 3 -UseBasicParsing 2>$null
             if ($response.StatusCode -eq 200) {
-                Write-Host "✓ Running (http://localhost:8000)" -ForegroundColor Green
+                Write-Host "[OK] Running (http://localhost:8000)" -ForegroundColor Green
             }
         } catch {
-            Write-Host "✗ Not responding" -ForegroundColor Red
+            Write-Host "[ERROR] Not responding" -ForegroundColor Red
         }
         
         Write-Host ""
