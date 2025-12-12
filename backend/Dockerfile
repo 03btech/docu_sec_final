@@ -23,6 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Ensure this matches your actual structure, e.g., the 'app' folder
 COPY ./app /app/app
 COPY ./ml /app/ml
+COPY ./seed_data.py /app/seed_data.py
 
 # Expose the port on which the FastAPI application will run
 EXPOSE 8000

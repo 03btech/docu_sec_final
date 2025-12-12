@@ -5,7 +5,7 @@
 # Usage: .\manage_docker.ps1 <command>
 
 param(
-    [Parameter(Position=0)]
+    [Parameter(Position = 0)]
     [ValidateSet("start", "stop", "restart", "status", "logs", "backup", "restore", "clean", "shell", "help")]
     [string]$Command = "help"
 )
@@ -56,7 +56,8 @@ function Test-Docker {
         docker ps > $null 2>&1
         if ($LASTEXITCODE -ne 0) { return $false }
         return $true
-    } catch {
+    }
+    catch {
         return $false
     }
 }
@@ -78,7 +79,8 @@ switch ($Command) {
             Write-Success "All containers started"
             Start-Sleep -Seconds 3
             docker-compose ps
-        } else {
+        }
+        else {
             Write-Error-Custom "Failed to start containers"
         }
     }
@@ -88,7 +90,8 @@ switch ($Command) {
         docker-compose stop
         if ($LASTEXITCODE -eq 0) {
             Write-Success "All containers stopped"
-        } else {
+        }
+        else {
             Write-Error-Custom "Failed to stop containers"
         }
     }
@@ -100,7 +103,8 @@ switch ($Command) {
             Write-Success "All containers restarted"
             Start-Sleep -Seconds 3
             docker-compose ps
-        } else {
+        }
+        else {
             Write-Error-Custom "Failed to restart containers"
         }
     }
@@ -114,10 +118,11 @@ switch ($Command) {
         
         # Check database
         Write-Host "Database:    " -NoNewline
-        $dbHealth = docker inspect --format='{{.State.Health.Status}}' docu_sec-db-1 2>$null
+        $dbHealth = docker inspect --format='{{.State.Health.Status}}' docu_sec_final-db-1 2>$null
         if ($dbHealth -eq "healthy") {
             Write-Host "[OK] Healthy" -ForegroundColor Green
-        } else {
+        }
+        else {
             Write-Host "[ERROR] $dbHealth" -ForegroundColor Red
         }
         
@@ -128,7 +133,8 @@ switch ($Command) {
             if ($response.StatusCode -eq 200) {
                 Write-Host "[OK] Running (http://localhost:8000)" -ForegroundColor Green
             }
-        } catch {
+        }
+        catch {
             Write-Host "[ERROR] Not responding" -ForegroundColor Red
         }
         
@@ -157,14 +163,15 @@ switch ($Command) {
         Write-Info "Creating backup: $backupFile"
         
         # Create backup
-        docker exec docu_sec-db-1 pg_dump -U docusec_user docu_security_db > $backupFile
+        docker exec docu_sec_final-db-1 pg_dump -U docusec_user docu_security_db > $backupFile
         
         if ($LASTEXITCODE -eq 0) {
             $fileSize = (Get-Item $backupFile).Length / 1KB
             Write-Success "Backup created successfully"
             Write-Info "File: $backupFile (${fileSize} KB)"
             Write-Info "Location: $(Get-Location)\$backupFile"
-        } else {
+        }
+        else {
             Write-Error-Custom "Backup failed"
         }
     }
@@ -204,11 +211,12 @@ switch ($Command) {
         }
         
         Write-Info "Restoring from: $($selectedBackup.Name)"
-        Get-Content $selectedBackup.FullName | docker exec -i docu_sec-db-1 psql -U docusec_user docu_security_db
+        Get-Content $selectedBackup.FullName | docker exec -i docu_sec_final-db-1 psql -U docusec_user docu_security_db
         
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Database restored successfully"
-        } else {
+        }
+        else {
             Write-Error-Custom "Restore failed"
         }
     }
@@ -237,7 +245,7 @@ switch ($Command) {
         Write-Info "Opening bash shell in backend container..."
         Write-Info "Type 'exit' to leave the shell"
         Write-Host ""
-        docker exec -it docu_sec-backend-1 /bin/bash
+        docker exec -it docu_sec_final-backend-1 /bin/bash
     }
     
     "help" {

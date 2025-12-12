@@ -5,17 +5,15 @@ services:
       - postgres_data:/var/lib/postgresql/data/
     ports:
       - "5432:5432"
-    env_file:
-      - ./backend/.env
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: docu_security_db
+      POSTGRES_USER: docusec_user
+      POSTGRES_PASSWORD: infosysyrab
       # Set timezone to UTC (matches backend)
       TZ: UTC
       PGTZ: UTC
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U docusec_user -d docu_security_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -28,6 +26,7 @@ services:
       # Mount source code for live-reloading (development only)
       - ./backend/app:/app/app
       - ./backend/ml:/app/ml
+      - ./backend/seed_data.py:/app/seed_data.py
       # Persistent volume for uploaded files
       - uploaded_files_data:/app/uploaded_files
       # DON'T mount the entire ./backend:/app to avoid overwriting pip packages

@@ -13,7 +13,7 @@ class AdminUserManagementView(QDialog):
         self.departments = []
         self.setWindowTitle("Create New User")
         self.setModal(True)
-        self.resize(600, 700)
+        self.resize(550, 600)
         self.setup_ui()
         self.load_departments()
 
@@ -240,13 +240,14 @@ class AdminUserManagementView(QDialog):
                 QPushButton:pressed { background-color: #6c7a7b; }
             """)
         
-        card_layout.addWidget(button_box)
-        
         form_layout.addWidget(card)
         form_layout.addStretch()
         
         scroll.setWidget(form_widget)
         main_layout.addWidget(scroll)
+        
+        # Add buttons outside scroll area
+        main_layout.addWidget(button_box)
 
     def load_departments(self):
         """Load departments from API."""

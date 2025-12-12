@@ -44,26 +44,13 @@ class MainWindow(QMainWindow):
         self.nav_panel.setFixedWidth(350)
         nav_layout = QVBoxLayout(self.nav_panel)
 
-        # Add a title for the sidebar
-        sidebar_title = QLabel("📂 DocuSec")
-        sidebar_title.setStyleSheet("""
-            font-size: 20px; 
-            font-weight: bold; 
-            color: #2c3e50;
-            padding: 10px;
-            background-color: #ecf0f1;
-            border-radius: 8px;
-        """)
-        sidebar_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        nav_layout.addWidget(sidebar_title)
-
         # User Info Card
         self.user_info_widget = QWidget()
         self.user_info_widget.setStyleSheet("""
             QWidget {
                 background-color: #ffffff;
-                border-radius: 10px;
-                border: 2px solid #3498db;
+                border-radius: 12px;
+                border: 1px solid #e0e0e0;
                 padding: 15px;
             }
         """)
@@ -141,78 +128,86 @@ class MainWindow(QMainWindow):
         self.nav_tree.setRootIsDecorated(True)
         
         # Create top-level items with Font Awesome icons
+        icon_color = '#546e7a'
+        
         # Dashboard item (admin-only)
         self.dashboard_item = QTreeWidgetItem(self.nav_tree)
         self.dashboard_item.setText(0, "Dashboard")
-        self.dashboard_item.setIcon(0, qta.icon('fa5s.chart-line', color='#3498db'))
+        self.dashboard_item.setIcon(0, qta.icon('fa5s.chart-line', color=icon_color))
         
         documents_item = QTreeWidgetItem(self.nav_tree)
         documents_item.setText(0, "Documents")
-        documents_item.setIcon(0, qta.icon('fa5s.folder', color='#f39c12'))
+        documents_item.setIcon(0, qta.icon('fa5s.folder', color=icon_color))
         
         # Add document sub-items
         my_docs_item = QTreeWidgetItem(documents_item)
         my_docs_item.setText(0, "My Documents")
-        my_docs_item.setIcon(0, qta.icon('fa5s.file-alt', color='#9b59b6'))
+        my_docs_item.setIcon(0, qta.icon('fa5s.file-alt', color=icon_color))
         
         dept_docs_item = QTreeWidgetItem(documents_item)
         dept_docs_item.setText(0, "Department Documents")
-        dept_docs_item.setIcon(0, qta.icon('fa5s.folder-open', color='#e67e22'))
+        dept_docs_item.setIcon(0, qta.icon('fa5s.folder-open', color=icon_color))
         
         public_docs_item = QTreeWidgetItem(documents_item)
         public_docs_item.setText(0, "Public Documents")
-        public_docs_item.setIcon(0, qta.icon('fa5s.globe', color='#16a085'))
+        public_docs_item.setIcon(0, qta.icon('fa5s.globe', color=icon_color))
         
         shared_docs_item = QTreeWidgetItem(documents_item)
         shared_docs_item.setText(0, "Shared With Me")
-        shared_docs_item.setIcon(0, qta.icon('fa5s.share-alt', color='#27ae60'))
+        shared_docs_item.setIcon(0, qta.icon('fa5s.share-alt', color=icon_color))
         
         upload_item = QTreeWidgetItem(documents_item)
         upload_item.setText(0, "Upload Document")
-        upload_item.setIcon(0, qta.icon('fa5s.cloud-upload-alt', color='#2ecc71'))
+        upload_item.setIcon(0, qta.icon('fa5s.cloud-upload-alt', color=icon_color))
         
         # Admin section (will be shown/hidden based on role)
         self.admin_item = QTreeWidgetItem(self.nav_tree)
         self.admin_item.setText(0, "Administration")
-        self.admin_item.setIcon(0, qta.icon('fa5s.user-shield', color='#e74c3c'))
+        self.admin_item.setIcon(0, qta.icon('fa5s.user-shield', color=icon_color))
         
         # Logs parent item (admin-only)
         self.logs_item = QTreeWidgetItem(self.admin_item)
         self.logs_item.setText(0, "System Logs")
-        self.logs_item.setIcon(0, qta.icon('fa5s.clipboard-list', color='#e74c3c'))
+        self.logs_item.setIcon(0, qta.icon('fa5s.clipboard-list', color=icon_color))
         
         # Add log sub-items
         self.access_logs_item = QTreeWidgetItem(self.logs_item)
         self.access_logs_item.setText(0, "Access Logs")
-        self.access_logs_item.setIcon(0, qta.icon('fa5s.user-check', color='#3498db'))
+        self.access_logs_item.setIcon(0, qta.icon('fa5s.user-check', color=icon_color))
         
         self.security_logs_item = QTreeWidgetItem(self.logs_item)
         self.security_logs_item.setText(0, "Security Logs")
-        self.security_logs_item.setIcon(0, qta.icon('fa5s.shield-alt', color='#c0392b'))
+        self.security_logs_item.setIcon(0, qta.icon('fa5s.shield-alt', color=icon_color))
         
         # Settings item (available to all users)
         settings_item = QTreeWidgetItem(self.nav_tree)
         settings_item.setText(0, "Settings")
-        settings_item.setIcon(0, qta.icon('fa5s.user-cog', color='#95a5a6'))
+        settings_item.setIcon(0, qta.icon('fa5s.user-cog', color=icon_color))
         
         # User Management (admin-only, separate from Settings)
         self.user_mgmt_item = QTreeWidgetItem(self.nav_tree)
         self.user_mgmt_item.setText(0, "User Management")
-        self.user_mgmt_item.setIcon(0, qta.icon('fa5s.users-cog', color='#e74c3c'))
+        self.user_mgmt_item.setIcon(0, qta.icon('fa5s.users-cog', color=icon_color))
         
         self.nav_tree.expandAll()
         self.nav_tree.itemClicked.connect(self.change_view)
-        # Set minimum height to ensure navigation items are not cramped
-        self.nav_tree.setMinimumHeight(400)
+        
+        # Add tree to layout with stretch to fill available space
         nav_layout.addWidget(self.nav_tree, stretch=1)
+
+        # Add a separator before logout
+        logout_separator = QFrame()
+        logout_separator.setFrameShape(QFrame.Shape.HLine)
+        logout_separator.setFrameShadow(QFrame.Shadow.Sunken)
+        logout_separator.setStyleSheet("background-color: #e0e0e0; margin-top: 10px; margin-bottom: 10px;")
+        nav_layout.addWidget(logout_separator)
 
         # Logout Button
         self.logout_button = QPushButton("Logout")
+        self.logout_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.logout_button.clicked.connect(self.logout)
         nav_layout.addWidget(self.logout_button)
 
-        # Minimal stretch to push logout to bottom but give priority to nav_tree
-        nav_layout.addStretch(0)
         main_layout.addWidget(self.nav_panel)
 
         # Content Area (Right)
@@ -269,19 +264,20 @@ class MainWindow(QMainWindow):
                 border: none;
                 background-color: transparent;
                 font-size: 14px;
-                color: #2c3e50;
+                color: #0f1016;
                 outline: 0;
             }
             QTreeWidget::item {
-                padding: 8px;
-                border-radius: 8px;
-                margin: 2px 0px;
+                padding: 12px;
+                border-radius: 6px;
+                margin: 4px 0px;
             }
             QTreeWidget::item:hover {
-                background-color: #ecf0f1;
+                background-color: #e8f5e9;
+                color: #3cb77e;
             }
             QTreeWidget::item:selected {
-                background-color: #3498db;
+                background-color: #3cb77e;
                 color: white;
             }
             QTreeWidget::branch {

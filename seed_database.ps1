@@ -21,8 +21,8 @@ Write-Header "  DocuSec Database Seeding  "
 
 # Check if Docker containers are running
 Write-Host "`n>> Checking Docker containers..." -ForegroundColor Cyan
-$dbRunning = docker ps --filter "name=docu_sec-db" --format "{{.Names}}" 2>$null
-$backendRunning = docker ps --filter "name=docu_sec-backend" --format "{{.Names}}" 2>$null
+$dbRunning = docker ps --filter "name=docu_sec_final-db" --format "{{.Names}}" 2>$null
+$backendRunning = docker ps --filter "name=docu_sec_final-backend" --format "{{.Names}}" 2>$null
 
 if (-not $dbRunning) {
     Write-Error-Custom "Database container is not running!"
@@ -39,9 +39,7 @@ if (-not $backendRunning) {
 Write-Success "Containers are running"
 
 # Build seed command
-$seedCommand = "python seed_data.py"
 if ($Clean) {
-    $seedCommand += " --clean"
     Write-Host "`n!️  WARNING: Clean mode will delete ALL existing data!" -ForegroundColor Yellow
     $confirm = Read-Host "Type 'DELETE' to confirm"
     if ($confirm -ne "DELETE") {
@@ -54,7 +52,12 @@ if ($Clean) {
 Write-Host "`n>> Running seed script..." -ForegroundColor Cyan
 Write-Host ""
 
-docker exec docu_sec-backend-1 $seedCommand
+if ($Clean) {
+    docker exec docu_sec_final-backend-1 python seed_data.py --clean
+}
+else {
+    docker exec docu_sec_final-backend-1 python seed_data.py
+}
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error-Custom "Seeding failed!"

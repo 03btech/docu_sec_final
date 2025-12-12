@@ -125,8 +125,11 @@ $runNow = Read-Host
 if ($runNow -eq "" -or $runNow -eq "y" -or $runNow -eq "Y") {
     Write-Host ""
     Write-Step "Launching frontend application..."
-    & .\run_frontend.ps1
-} else {
+    # Make sure we're in the project root directory
+    Set-Location $PSScriptRoot
+    & "$PSScriptRoot\run_frontend.ps1"
+}
+else {
     Write-Host ""
     Write-Info "Run frontend later with: .\run_frontend.ps1"
     Write-Host ""

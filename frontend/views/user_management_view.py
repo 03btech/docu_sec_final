@@ -151,7 +151,17 @@ class UserEditDialog(QDialog):
         self.load_user_data()
     
     def setup_ui(self):
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
+        main_layout.setSpacing(15)
+        self.resize(500, 600)
+        
+        # Scroll Area
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
         layout.setSpacing(15)
         
         # Input style
@@ -255,6 +265,13 @@ class UserEditDialog(QDialog):
         password_group.setLayout(password_layout)
         layout.addWidget(password_group)
         
+        # Add stretch to push content up
+        layout.addStretch()
+        
+        # Set scroll widget
+        scroll.setWidget(content_widget)
+        main_layout.addWidget(scroll)
+        
         # Buttons
         button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | 
@@ -294,7 +311,7 @@ class UserEditDialog(QDialog):
             }
         """)
         
-        layout.addWidget(button_box)
+        main_layout.addWidget(button_box)
     
     def load_departments(self):
         """Load departments into combo box."""
@@ -477,7 +494,7 @@ class UserManagementView(QWidget):
         
         # Create User button (admin only)
         create_user_btn = QPushButton("Create User")
-        create_user_btn.setIcon(qta.icon('fa5s.user-plus', color='#27ae60'))
+        create_user_btn.setIcon(qta.icon('fa5s.user-plus', color="white"))
         create_user_btn.setStyleSheet("""
             QPushButton {
                 background-color: #27ae60;

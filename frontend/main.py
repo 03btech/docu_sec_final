@@ -1,5 +1,7 @@
 import sys
+import ctypes
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtGui import QIcon
 from api.client import APIClient
 from views.login_window import LoginWindow
 from views.main_window import MainWindow
@@ -8,8 +10,18 @@ from views.main_window import MainWindow
 main_window = None
 
 def main():
+    # Set AppUserModelID for Windows taskbar icon to work correctly
+    myappid = 'docusec.app.v1'  # Arbitrary string
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except Exception:
+        pass
+
     print("Starting application...")
     app = QApplication(sys.argv)
+    
+    # Set application icon
+    app.setWindowIcon(QIcon('assets/icons/lock.png'))
     
     # Load theme
     try:

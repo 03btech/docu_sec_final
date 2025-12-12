@@ -40,7 +40,8 @@ try {
             exit 1
         }
     }
-} catch {
+}
+catch {
     Write-Error-Custom "Python not found in PATH!"
     Write-Info "Install Python 3.10+ from: https://www.python.org/downloads/"
     Write-Info "During installation, check 'Add Python to PATH'"
@@ -62,10 +63,12 @@ if (Test-Path "venv") {
         Remove-Item -Recurse -Force venv
         python -m venv venv
         Write-Success "Virtual environment recreated"
-    } else {
+    }
+    else {
         Write-Success "Using existing virtual environment"
     }
-} else {
+}
+else {
     python -m venv venv
     if ($LASTEXITCODE -ne 0) {
         Write-Error-Custom "Failed to create virtual environment!"
@@ -106,15 +109,48 @@ $packages = @(
 $totalPackages = $packages.Count
 $current = 0
 
+Write-Host "  Note: Large packages may take several minutes to download" -ForegroundColor Yellow
+Write-Host ""
+
 foreach ($package in $packages) {
     $current++
     Write-Host "  [$current/$totalPackages] Installing $package..." -ForegroundColor Cyan -NoNewline
-    pip install $package --quiet 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host " [OK]" -ForegroundColor Green
-    } else {
+    
+    # Retry logic for network issues
+    $maxRetries = 3
+    $retryCount = 0
+    $success = $false
+    
+    while (-not $success -and $retryCount -lt $maxRetries) {
+        if ($retryCount -gt 0) {
+            Write-Host ""
+            Write-Host "  Retrying ($retryCount/$maxRetries)..." -ForegroundColor Yellow -NoNewline
+        }
+        
+        # Use longer timeout and show output for large packages
+        if ($package -match "PyQt6|torch|torchvision|opencv-python|ultralytics") {
+            pip install $package --timeout 120 --retries 5 2>&1 | Out-Null
+        }
+        else {
+            pip install $package --timeout 60 2>&1 | Out-Null
+        }
+        
+        if ($LASTEXITCODE -eq 0) {
+            $success = $true
+            Write-Host " [OK]" -ForegroundColor Green
+        }
+        else {
+            $retryCount++
+            if ($retryCount -lt $maxRetries) {
+                Start-Sleep -Seconds 2
+            }
+        }
+    }
+    
+    if (-not $success) {
         Write-Host " [ERROR]" -ForegroundColor Red
-        Write-Error-Custom "Failed to install $package"
+        Write-Error-Custom "Failed to install $package after $maxRetries attempts"
+        Write-Info "You may need to install it manually: pip install $package"
     }
 }
 
@@ -126,14 +162,14 @@ Write-Header "Step 7: Verifying Installation"
 Write-Host ""
 
 $verificationTests = @{
-    "PyQt6" = "from PyQt6.QtWidgets import QApplication"
-    "Requests" = "import requests"
-    "QtAwesome" = "import qtawesome"
-    "OpenCV" = "import cv2"
-    "YOLOv8" = "from ultralytics import YOLO"
-    "PyMuPDF" = "import fitz"
+    "PyQt6"       = "from PyQt6.QtWidgets import QApplication"
+    "Requests"    = "import requests"
+    "QtAwesome"   = "import qtawesome"
+    "OpenCV"      = "import cv2"
+    "YOLOv8"      = "from ultralytics import YOLO"
+    "PyMuPDF"     = "import fitz"
     "python-docx" = "from docx import Document"
-    "Pillow" = "from PIL import Image"
+    "Pillow"      = "from PIL import Image"
 }
 
 foreach ($test in $verificationTests.GetEnumerator()) {
@@ -141,7 +177,8 @@ foreach ($test in $verificationTests.GetEnumerator()) {
     $result = python -c "$($test.Value)" 2>&1
     if ($LASTEXITCODE -eq 0) {
         Write-Host " [OK]" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host " [ERROR]" -ForegroundColor Red
         Write-Info "Warning: $($test.Key) verification failed"
     }
@@ -152,7 +189,8 @@ Write-Header "Step 8: Checking YOLOv8 Model"
 if (Test-Path "yolov8n.pt") {
     $modelSize = (Get-Item "yolov8n.pt").Length / 1MB
     Write-Success "YOLOv8 model found (${modelSize:N1} MB)"
-} else {
+}
+else {
     Write-Info "YOLOv8 model not found"
     Write-Info "The model will be downloaded automatically on first run"
     Write-Info "Or download manually from: https://github.com/ultralytics/assets/releases/download/v0.0.0/yolov8n.pt"
@@ -165,7 +203,8 @@ try {
     if ($response.StatusCode -eq 200) {
         Write-Success "Backend is running (http://localhost:8000)"
     }
-} catch {
+}
+catch {
     Write-Host "! " -ForegroundColor Yellow -NoNewline
     Write-Host "Backend is not responding" -ForegroundColor Yellow
     Write-Info "Start backend with: cd .. && .\build_docker.ps1"

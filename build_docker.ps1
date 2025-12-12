@@ -32,7 +32,8 @@ try {
     docker ps > $null 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Docker not running" }
     Write-Success "Docker is running"
-} catch {
+}
+catch {
     Write-Error-Custom "Docker is not running!"
     Write-Info "Please start Docker Desktop and try again."
     exit 1
@@ -78,7 +79,7 @@ if (-not (Test-Path $envPath)) {
     Write-Info ".env file not found. Creating default configuration..."
     
     # Generate random secret key
-    $secretKey = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 32 | ForEach-Object {[char]$_})
+    $secretKey = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 32 | ForEach-Object { [char]$_ })
     
     $envContent = @"
 # Database Configuration
@@ -100,7 +101,8 @@ POSTGRES_PASSWORD=infosysyrab
     Set-Content -Path $envPath -Value $envContent
     Write-Success "Created .env file with auto-generated SECRET_KEY"
     Write-Info "Default password: infosysyrab (change in backend\.env)"
-} else {
+}
+else {
     Write-Success "Found .env configuration"
 }
 
@@ -118,7 +120,8 @@ if ($Rebuild) {
 Write-Step "Starting Docker containers..."
 if ($Rebuild) {
     docker-compose up -d
-} else {
+}
+else {
     docker-compose up -d --build
 }
 
@@ -138,7 +141,7 @@ Start-Sleep -Seconds 5
 Write-Host "  Checking database..." -NoNewline
 $dbHealthy = $false
 for ($i = 1; $i -le 10; $i++) {
-    $dbStatus = docker inspect --format='{{.State.Health.Status}}' docu_sec-db-1 2>$null
+    $dbStatus = docker inspect --format='{{.State.Health.Status}}' docu_sec_final-db-1 2>$null
     if ($dbStatus -eq "healthy") {
         $dbHealthy = $true
         break
@@ -148,7 +151,8 @@ for ($i = 1; $i -le 10; $i++) {
 
 if ($dbHealthy) {
     Write-Host " [OK]" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host " ... (still starting)" -ForegroundColor Yellow
 }
 
@@ -162,14 +166,16 @@ for ($i = 1; $i -le 15; $i++) {
             $backendHealthy = $true
             break
         }
-    } catch {
+    }
+    catch {
         Start-Sleep -Seconds 2
     }
 }
 
 if ($backendHealthy) {
     Write-Host " [OK]" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host " ... (still starting)" -ForegroundColor Yellow
 }
 
@@ -192,10 +198,10 @@ Write-Host ""
 
 # Get local IP for network access
 $localIP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
-    $_.InterfaceAlias -notlike "*Loopback*" -and 
-    $_.IPAddress -notlike "169.254.*" -and
-    $_.PrefixOrigin -eq "Dhcp" -or $_.PrefixOrigin -eq "Manual"
-} | Select-Object -First 1).IPAddress
+        $_.InterfaceAlias -notlike "*Loopback*" -and 
+        $_.IPAddress -notlike "169.254.*" -and
+        $_.PrefixOrigin -eq "Dhcp" -or $_.PrefixOrigin -eq "Manual"
+    } | Select-Object -First 1).IPAddress
 
 if ($localIP) {
     Write-Host "[Link] Network Access:" -ForegroundColor Cyan
