@@ -113,20 +113,6 @@ class MyDocumentsView(QWidget):
         if classification == 'confidential':
             print("⚠️ Confidential document - checking camera...")
             
-            # Check camera availability
-            camera_available, camera_message = check_camera_available()
-            
-            if not camera_available:
-                QMessageBox.critical(
-                    self, 
-                    "Camera Required", 
-                    f"Cannot view confidential documents without an active camera.\n\n{camera_message}"
-                )
-                print(f"❌ Camera check failed: {camera_message}")
-                return
-            
-            print(f"✅ Camera available: {camera_message}")
-            
             # Show security warning
             response = QMessageBox.warning(
                 self,

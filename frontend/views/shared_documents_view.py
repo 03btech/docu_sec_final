@@ -118,17 +118,6 @@ class SharedDocumentsView(QWidget):
         
         # Check if confidential - require camera
         if classification == 'confidential':
-            # Check camera availability
-            camera_available, camera_message = check_camera_available()
-            
-            if not camera_available:
-                QMessageBox.critical(
-                    self, 
-                    "Camera Required", 
-                    f"Cannot view confidential documents without an active camera.\n\n{camera_message}"
-                )
-                return
-            
             # Show security warning
             response = QMessageBox.warning(
                 self,

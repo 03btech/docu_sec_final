@@ -9,6 +9,7 @@ import qtawesome as qta
 import tempfile
 import os
 import sys
+import threading
 import platform
 from pathlib import Path
 from datetime import datetime
@@ -36,7 +37,9 @@ class SecureDocumentViewer(QDialog):
     """
     
     def __init__(self, document_data: dict, file_content: bytes, api_client, parent=None):
-        super().__init__(parent)
+        # Pass None as parent to ensure this is a true top-level window
+        # This fixes "must be a top level window" Qt warnings
+        super().__init__(None)
         self.document_data = document_data
         self.file_content = file_content
         self.filename = document_data.get('filename', 'Document')
@@ -49,7 +52,14 @@ class SecureDocumentViewer(QDialog):
         self.is_monitoring = False
         self.person_present = False
         self.phone_detection_logged = False
+        self.person_missing_logged = False
+        self.low_lighting_logged = False
         self.model_initialized = False
+        self._security_initialized = False
+        self._phone_alert_active = False
+        self._low_lighting_active = False
+        self._phone_check_timer = None
+        self._low_lighting_timer = None
         
         self.setWindowTitle(f"🔒 Secure View - {self.filename}")
         self.setMinimumSize(900, 700)
@@ -66,9 +76,6 @@ class SecureDocumentViewer(QDialog):
         if self.classification.lower() == 'confidential':
             # Install event filter to catch all key events including system keys
             self.installEventFilter(self)
-            
-            # Apply Windows screen capture protection
-            self._apply_screen_capture_protection()
         
         self.setup_ui()
         
@@ -78,13 +85,32 @@ class SecureDocumentViewer(QDialog):
         else:
             self.load_document()
         
-        # Start monitoring if confidential
-        if self.classification.lower() == 'confidential':
-            self.start_monitoring()
-        
         # Open maximized
         self.showMaximized()
+
+    def showEvent(self, event):
+        """Initialize security when window is shown."""
+        super().showEvent(event)
+        if not self._security_initialized and self.classification.lower() == 'confidential':
+            self._security_initialized = True
+            # Delay slightly to allow UI to render
+            QTimer.singleShot(100, self._initialize_security)
+
+    def _initialize_security(self):
+        """Initialize security features after window is shown."""
+        self._apply_screen_capture_protection()
+        self.start_monitoring()
     
+    def _log_security_event_async(self, activity_type: str, metadata: dict = None):
+        """Log security event asynchronously to prevent UI freezing."""
+        def log_task():
+            try:
+                self.api_client.log_security_event(activity_type, metadata)
+            except Exception as e:
+                print(f"Failed to log security event async: {e}")
+        
+        threading.Thread(target=log_task, daemon=True).start()
+
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
         
@@ -143,11 +169,13 @@ class SecureDocumentViewer(QDialog):
         
         # Security overlay (only for confidential)
         if self.classification.lower() == 'confidential':
+            # Create overlays but don't show them yet or set geometry
+            # They will be resized in resizeEvent
             self.security_overlay = SecurityBlockOverlay(self)
+            self.security_overlay.hide()
             
-            # Add dynamic watermark overlay
-            self.watermark_overlay = WatermarkOverlay(self, self.api_client)
-            self.watermark_overlay.setGeometry(self.rect())
+            # Watermark overlay will be created after window is shown
+            self.watermark_overlay = None
     
     def _show_security_initialization_message(self):
         """Show waiting message while security system initializes."""
@@ -185,6 +213,7 @@ class SecureDocumentViewer(QDialog):
             # Connect signals
             self.detection_worker.person_detected.connect(self.on_person_detection)
             self.detection_worker.phone_detected.connect(self.on_phone_detection)
+            self.detection_worker.low_lighting_detected.connect(self.on_low_lighting_detection)
             self.detection_worker.camera_error.connect(self.on_camera_error)
             self.detection_worker.detection_status.connect(self.on_detection_status)
             self.detection_worker.model_initialized.connect(self.on_model_initialized)
@@ -202,59 +231,139 @@ class SecureDocumentViewer(QDialog):
         """Handle person detection status."""
         self.person_present = person_present
         
+        # Don't hide overlay if phone alert or low lighting is active - they take priority
+        if self._phone_alert_active or self._low_lighting_active:
+            return
+        
         if person_present:
-            # Person detected - hide block
+            # Person detected - hide block (only if no phone alert and no low lighting)
             self.security_overlay.hide_block()
+            self.person_missing_logged = False
         else:
             # No person - show block and log
             self.security_overlay.show_person_missing_block()
             
-            # Log the event
-            self.api_client.log_security_event(
-                activity_type="no_person_detected",
-                metadata={
-                    "document_id": self.document_data.get('id'),
-                    "document_name": self.filename,
-                    "classification": self.classification
-                }
-            )
+            # Log the event only if not already logged for this session
+            if not self.person_missing_logged:
+                self._log_security_event_async(
+                    activity_type="no_person_detected",
+                    metadata={
+                        "document_id": self.document_data.get('id'),
+                        "document_name": self.filename,
+                        "classification": self.classification
+                    }
+                )
+                self.person_missing_logged = True
+    
+    def on_low_lighting_detection(self, low_lighting: bool):
+        """Handle low lighting detection - blocks access when lighting is insufficient."""
+        # Don't process if phone alert is active - phone alert takes priority
+        if self._phone_alert_active:
+            return
+        
+        if low_lighting:
+            # Only start timer if not already in low lighting alert mode
+            if self._low_lighting_active:
+                return  # Already handling low lighting, ignore duplicate signals
+            
+            self._low_lighting_active = True
+            
+            # Low lighting detected - show block and log
+            self.security_overlay.show_low_lighting_block()
+            
+            # Log the event only if not already logged for this session
+            if not self.low_lighting_logged:
+                self._log_security_event_async(
+                    activity_type="low_lighting_detected",
+                    metadata={
+                        "document_id": self.document_data.get('id'),
+                        "document_name": self.filename,
+                        "classification": self.classification,
+                        "reason": "Insufficient lighting conditions"
+                    }
+                )
+                self.low_lighting_logged = True
+            
+            # Start 10-second timer - will close viewer if lighting not restored
+            self._low_lighting_timer = QTimer(self)
+            self._low_lighting_timer.setSingleShot(True)
+            self._low_lighting_timer.timeout.connect(self._close_after_low_lighting)
+            self._low_lighting_timer.start(10000)  # 10 seconds
+        else:
+            # Lighting restored - cancel timer and hide block
+            self._low_lighting_active = False
+            
+            # Cancel the timer if it's running
+            if self._low_lighting_timer and self._low_lighting_timer.isActive():
+                self._low_lighting_timer.stop()
+                self._low_lighting_timer = None
+            
+            # Hide block (only if person present and no phone alert)
+            if self.person_present and not self._phone_alert_active:
+                self.security_overlay.hide_block()
+            self.low_lighting_logged = False
+    
+    def _close_after_low_lighting(self):
+        """Close viewer after low lighting timeout."""
+        # Log the forced closure
+        self._log_security_event_async(
+            activity_type="viewer_closed_low_lighting",
+            metadata={
+                "document_id": self.document_data.get('id'),
+                "document_name": self.filename,
+                "classification": self.classification,
+                "reason": "Low lighting not resolved - security policy enforced"
+            }
+        )
+        
+        # Close the secure viewer
+        self.close()
     
     def on_phone_detection(self, detection_data: dict):
-        """Handle phone detection - keeps blocking continuously while phone is detected."""
-        # Show block overlay (will stay visible)
+        """Handle phone detection - shows overlay and closes viewer after 10 seconds."""
+        # Only process if not already in alert mode
+        if self._phone_alert_active:
+            return  # Already handling a phone detection, ignore duplicate signals
+        
+        # Mark that we're in phone alert mode
+        self._phone_alert_active = True
+        
+        # Show block overlay
         self.security_overlay.show_phone_detected_block()
         
-        # Log to backend (only once per detection session)
-        if not self.phone_detection_logged:
-            self.api_client.log_security_event(
-                activity_type="phone_detected",
-                metadata={
-                    "document_id": self.document_data.get('id'),
-                    "document_name": self.filename,
-                    "classification": self.classification,
-                    "detection_timestamp": detection_data.get('timestamp'),
-                    "confidence": detection_data.get('confidence')
-                }
-            )
-            self.phone_detection_logged = True
+        # Log to backend
+        self._log_security_event_async(
+            activity_type="phone_detected",
+            metadata={
+                "document_id": self.document_data.get('id'),
+                "document_name": self.filename,
+                "classification": self.classification,
+                "detection_timestamp": detection_data.get('timestamp'),
+                "confidence": detection_data.get('confidence')
+            }
+        )
         
-        # Note: Block stays visible continuously until phone is removed
-        # Detection worker will stop emitting phone_detected when phone is gone
-        # Then we can check after a delay if phone is truly removed
-        if hasattr(self, '_phone_check_timer'):
-            self._phone_check_timer.stop()
-        
-        self._phone_check_timer = QTimer()
-        self._phone_check_timer.timeout.connect(self._check_phone_removed)
+        # Start 10-second timer - will close viewer when it expires
+        self._phone_check_timer = QTimer(self)
         self._phone_check_timer.setSingleShot(True)
-        self._phone_check_timer.start(3000)  # Check after 3 seconds of no new detections
+        self._phone_check_timer.timeout.connect(self._close_after_phone_detection)
+        self._phone_check_timer.start(10000)  # 10 seconds
     
-    def _check_phone_removed(self):
-        """Check if phone has been removed (called when no new phone detections)."""
-        # Hide block and reset for new detections
-        if self.person_present:
-            self.security_overlay.hide_block()
-            self.phone_detection_logged = False  # Allow new detection sessions
+    def _close_after_phone_detection(self):
+        """Close viewer after phone detection timeout."""
+        # Log the forced closure
+        self._log_security_event_async(
+            activity_type="viewer_closed_phone_detection",
+            metadata={
+                "document_id": self.document_data.get('id'),
+                "document_name": self.filename,
+                "classification": self.classification,
+                "reason": "Phone detected - security policy enforced"
+            }
+        )
+        
+        # Close the secure viewer
+        self.close()
     
     def on_camera_error(self, error_message: str):
         """Handle camera errors."""
@@ -279,6 +388,13 @@ class SecureDocumentViewer(QDialog):
             
             # Now load and display the document
             self.load_document()
+            
+            # Create watermark overlay now that window is properly shown
+            if self.classification.lower() == 'confidential' and not self.watermark_overlay:
+                self.watermark_overlay = WatermarkOverlay(self, self.api_client)
+                self.watermark_overlay.setGeometry(self.rect())
+                self.watermark_overlay.show()
+                self.watermark_overlay.raise_()
         else:
             # Model initialization failed - show error
             if hasattr(self, 'waiting_label'):
@@ -319,7 +435,7 @@ class SecureDocumentViewer(QDialog):
             if result:
                 print(f"✓ Screen capture protection ENABLED for window {hwnd}")
                 # Log the protection activation
-                self.api_client.log_security_event(
+                self._log_security_event_async(
                     activity_type="screen_capture_protection_enabled",
                     metadata={
                         "document_id": self.document_data.get('id'),
@@ -333,7 +449,7 @@ class SecureDocumentViewer(QDialog):
                 error_code = ctypes.get_last_error()
                 print(f"✗ Failed to enable screen capture protection. Error code: {error_code}")
                 # Still log the attempt
-                self.api_client.log_security_event(
+                self._log_security_event_async(
                     activity_type="screen_capture_protection_failed",
                     metadata={
                         "document_id": self.document_data.get('id'),
@@ -537,7 +653,7 @@ class SecureDocumentViewer(QDialog):
     def _handle_screenshot_attempt(self, method: str):
         """Handle screenshot attempt detection and logging."""
         # Log to backend
-        self.api_client.log_security_event(
+        self._log_security_event_async(
             activity_type="screenshot_attempt",
             metadata={
                 "document_id": self.document_data.get('id'),
@@ -581,8 +697,8 @@ class SecureDocumentViewer(QDialog):
     
     def resizeEvent(self, event):
         """Ensure overlays resize with window."""
-        if hasattr(self, 'security_overlay'):
+        if hasattr(self, 'security_overlay') and self.security_overlay:
             self.security_overlay.setGeometry(self.rect())
-        if hasattr(self, 'watermark_overlay'):
+        if hasattr(self, 'watermark_overlay') and self.watermark_overlay:
             self.watermark_overlay.setGeometry(self.rect())
         super().resizeEvent(event)

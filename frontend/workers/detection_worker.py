@@ -25,6 +25,7 @@ class DetectionWorker(QThread):
     # Signals
     person_detected = pyqtSignal(bool)  # True if person detected, False if no person
     phone_detected = pyqtSignal(dict)  # Emits detection details
+    low_lighting_detected = pyqtSignal(bool)  # True if low lighting detected
     camera_error = pyqtSignal(str)  # Emits error messages
     detection_status = pyqtSignal(str)  # Status updates
     model_initialized = pyqtSignal(bool)  # True if model loaded successfully, False if failed
@@ -46,6 +47,23 @@ class DetectionWorker(QThread):
         self.PERSON_CLASS_ID = 0
         self.CELL_PHONE_CLASS_ID = 67
         
+        # Persistence settings - require multiple consecutive detections
+        self.phone_detection_threshold = 2  # Frames with phone before triggering (faster response)
+        self.phone_detection_count = 0  # Current consecutive phone detections
+        self.no_person_detection_threshold = 5  # Frames without person before blocking
+        self.no_person_detection_count = 0  # Current consecutive no-person frames
+        self.phone_alert_emitted = False  # Track if we already emitted phone alert this session
+        
+        # Confidence thresholds (balanced for speed and accuracy)
+        self.person_confidence = 0.35  # 35% confidence for person
+        self.phone_confidence = 0.25  # 25% confidence for phone (more sensitive)
+        
+        # Low lighting detection settings
+        self.brightness_threshold = 200  # Minimum average brightness (0-255)
+        self.low_lighting_detection_threshold = 5  # Consecutive frames before triggering
+        self.low_lighting_detection_count = 0  # Current consecutive low light frames
+        self.low_lighting_active = False  # Track current low lighting state
+        
     def initialize_camera(self):
         """Initialize the webcam."""
         try:
@@ -54,10 +72,12 @@ class DetectionWorker(QThread):
                 self.camera_error.emit("Failed to open camera. Please check if a camera is connected.")
                 return False
             
-            # Set camera properties for better performance
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            # Set camera properties for better detection
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # Higher resolution for better phone detection
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
+            self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)  # Enable autofocus if available
+            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # Enable auto exposure
             
             self.detection_status.emit("✅ Camera initialized successfully")
             return True
@@ -73,9 +93,9 @@ class DetectionWorker(QThread):
             return False
         
         try:
-            # Load YOLOv8 nano model (lightweight and fast)
+            # Load YOLOv8 small model (better accuracy than nano, still fast)
             self.detection_status.emit("🔄 Loading YOLOv8 model...")
-            self.model = YOLO('yolov8n.pt')  # Nano version for speed
+            self.model = YOLO('yolov8s.pt')  # Small version for better accuracy
             self.detection_status.emit("✅ YOLOv8 model loaded successfully")
             self.model_initialized.emit(True)
             return True
@@ -101,7 +121,7 @@ class DetectionWorker(QThread):
         self.last_person_time = time.time()
         
         frame_count = 0
-        detection_interval = 10  # Process every 10th frame for performance
+        detection_interval = 3  # Process every 3rd frame for faster detection
         
         while self.running:
             try:
@@ -126,14 +146,45 @@ class DetectionWorker(QThread):
         # Cleanup
         self.cleanup()
     
+    def check_lighting(self, frame):
+        """Check if the frame has adequate lighting."""
+        try:
+            # Convert to grayscale and calculate average brightness
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            avg_brightness = np.mean(gray)
+            
+            if avg_brightness < self.brightness_threshold:
+                self.low_lighting_detection_count += 1
+                if self.low_lighting_detection_count >= self.low_lighting_detection_threshold:
+                    if not self.low_lighting_active:
+                        self.low_lighting_active = True
+                        self.low_lighting_detected.emit(True)
+                        self.detection_status.emit(f"⚠️ Low lighting detected (brightness: {avg_brightness:.0f}/255) - Screen blocked")
+                    return False  # Low lighting
+            else:
+                self.low_lighting_detection_count = 0
+                if self.low_lighting_active:
+                    self.low_lighting_active = False
+                    self.low_lighting_detected.emit(False)
+                    self.detection_status.emit("✅ Lighting restored - Monitoring active")
+            return True  # Adequate lighting
+        except Exception as e:
+            print(f"Error checking lighting: {e}")
+            return True  # Assume adequate lighting on error
+    
     def process_frame(self, frame):
         """Process a single frame for detections."""
         try:
-            # Run YOLOv8 inference
-            results = self.model(frame, verbose=False, conf=0.5)
+            # First check lighting conditions
+            if not self.check_lighting(frame):
+                return  # Skip detection if low lighting
+            
+            # Run YOLOv8 inference with optimized settings
+            results = self.model(frame, verbose=False, conf=0.4, iou=0.5)
             
             person_found = False
             phone_found = False
+            phone_confidence = 0.0
             
             # Parse detections
             for result in results:
@@ -142,43 +193,57 @@ class DetectionWorker(QThread):
                     class_id = int(box.cls[0])
                     confidence = float(box.conf[0])
                     
-                    # Check for person
-                    if class_id == self.PERSON_CLASS_ID and confidence > 0.5:
+                    # Check for person with configurable confidence
+                    if class_id == self.PERSON_CLASS_ID and confidence > self.person_confidence:
                         person_found = True
                         self.last_person_time = time.time()
                     
-                    # Check for cell phone
-                    if class_id == self.CELL_PHONE_CLASS_ID and confidence > 0.4:
+                    # Check for cell phone with configurable confidence
+                    if class_id == self.CELL_PHONE_CLASS_ID and confidence > self.phone_confidence:
                         phone_found = True
+                        phone_confidence = max(phone_confidence, confidence)
             
-            # Emit person detection status
+            # Handle person detection with persistence
             current_time = time.time()
-            time_since_person = current_time - self.last_person_time
             
-            if time_since_person > self.person_timeout:
-                # No person detected for too long
-                self.person_detected.emit(False)
-                self.detection_status.emit("⚠️ No person detected - Screen blocked")
-            else:
+            if person_found:
+                self.no_person_detection_count = 0  # Reset no-person counter
                 self.person_detected.emit(True)
-                if person_found:
-                    self.detection_status.emit("✅ Person detected - Monitoring active")
+                self.detection_status.emit("✅ Person detected - Monitoring active")
+            else:
+                self.no_person_detection_count += 1
+                # Only block after consecutive frames without person
+                if self.no_person_detection_count >= self.no_person_detection_threshold:
+                    time_since_person = current_time - self.last_person_time
+                    if time_since_person > self.person_timeout:
+                        self.person_detected.emit(False)
+                        self.detection_status.emit("⚠️ No person detected - Screen blocked")
             
-            # Emit phone detection continuously (every detection, no cooldown for blocking)
-            # But use cooldown for status messages to avoid spam
+            # Handle phone detection with persistence
             if phone_found:
-                detection_data = {
-                    'timestamp': datetime.now().isoformat(),
-                    'confidence': 0.4,  # Minimum confidence used
-                    'type': 'cell_phone'
-                }
-                # Emit signal every time (secure viewer will handle continuous blocking)
-                self.phone_detected.emit(detection_data)
+                self.phone_detection_count += 2  # Increase by 2 when found
+                # Cap at reasonable max to prevent overflow
+                self.phone_detection_count = min(self.phone_detection_count, 20)
                 
-                # Update status message only periodically to avoid spam
-                if (current_time - self.last_phone_alert) > self.phone_cooldown:
-                    self.last_phone_alert = current_time
-                    self.detection_status.emit("🚨 PHONE DETECTED - Security alert!")
+                # Trigger alert ONLY ONCE after threshold reached
+                if self.phone_detection_count >= self.phone_detection_threshold and not self.phone_alert_emitted:
+                    self.phone_alert_emitted = True  # Mark as emitted
+                    detection_data = {
+                        'timestamp': datetime.now().isoformat(),
+                        'confidence': phone_confidence,
+                        'type': 'cell_phone',
+                        'consecutive_frames': self.phone_detection_count
+                    }
+                    self.phone_detected.emit(detection_data)
+                    self.detection_status.emit(f"🚨 PHONE DETECTED ({phone_confidence:.0%} confidence) - Security alert!")
+            else:
+                # Gradual decay instead of immediate reset
+                if self.phone_detection_count > 0:
+                    self.phone_detection_count -= 1
+                
+                # Reset alert flag when count drops to zero (phone fully gone)
+                if self.phone_detection_count == 0:
+                    self.phone_alert_emitted = False
                 
         except Exception as e:
             print(f"Error processing frame: {e}")
