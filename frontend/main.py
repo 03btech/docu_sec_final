@@ -45,7 +45,7 @@ def main():
         print("Login successful, creating main window")
         # Store globally to prevent garbage collection
         main_window = MainWindow(api_client)
-        main_window.show()
+        main_window.showMaximized()
         main_window.raise_()
         main_window.activateWindow()
         login_window.close()

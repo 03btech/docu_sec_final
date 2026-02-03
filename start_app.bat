@@ -1,0 +1,6 @@
+@echo off
+echo Starting DocuSec Application...
+echo.
+echo Setting Execution Policy to Bypass and running scripts...
+powershell -NoProfile -Command "Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass; Write-Host 'Running build_docker.ps1...'; .\build_docker.ps1; Write-Host 'Running run_frontend.ps1...'; .\run_frontend.ps1"
+pause

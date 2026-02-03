@@ -240,14 +240,14 @@ def classify_text_enhanced(text: str) -> Tuple[str, float]:
     ml_scores = {"confidential": 0.0, "internal": 0.0, "public": 0.0}
     
     try:
-        for segment in segments[:3]:  # Analyze up to 3 segments to balance accuracy vs performance
+        for segment in segments:  # Analyze all segments
             result = get_classifier()(segment, candidate_labels)
             for label, score in zip(result['labels'], result['scores']):
                 ml_scores[label] += score
         
         # Average ML scores across segments
         if segments:
-            ml_scores = {k: v / len(segments[:3]) for k, v in ml_scores.items()}
+            ml_scores = {k: v / len(segments) for k, v in ml_scores.items()}
             
     except Exception as e:
         logger.error(f"Error in ML classification: {e}")

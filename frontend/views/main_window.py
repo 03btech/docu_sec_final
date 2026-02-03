@@ -477,7 +477,7 @@ class MainWindow(QMainWindow):
             global _active_main_window
             # Create new main window and store globally to prevent garbage collection
             _active_main_window = MainWindow(self.api_client)
-            _active_main_window.show()
+            _active_main_window.showMaximized()
             _active_main_window.raise_()
             _active_main_window.activateWindow()
             # Close login window
