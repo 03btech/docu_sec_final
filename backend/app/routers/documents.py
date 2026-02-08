@@ -14,6 +14,12 @@ from .. import crud, models, schemas
 from ..dependencies import get_current_user
 from ..rate_limit import limiter
 from ml.classifier import extract_document_text_async, classify_extracted_text_async
+from ml.vertex_ai_classifier import (
+    ClassificationQuotaError,
+    ClassificationAuthError,
+    ClassificationModelError,
+    ClassificationTimeoutError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +54,10 @@ def _sanitize_classification_error(exc: Exception) -> str:
     """Map exception types to safe user-facing messages (P0-REVIEW-6)."""
     error_type = type(exc).__name__
     SAFE_ERROR_MAP = {
+        "ClassificationQuotaError": "Classification service temporarily busy (quota exceeded) — retry later.",
+        "ClassificationAuthError": "Vertex AI authentication failed — contact your administrator.",
+        "ClassificationModelError": "Classification model configuration error — contact your administrator.",
+        "ClassificationTimeoutError": "Classification timed out after multiple attempts — retry later.",
         "Unauthenticated": "Authentication error — contact your administrator.",
         "PermissionDenied": "Service account lacks required permissions — contact admin.",
         "ResourceExhausted": "Classification service temporarily busy — retry later.",

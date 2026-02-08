@@ -11,6 +11,30 @@ from google.api_core import exceptions as google_exceptions
 
 logger = logging.getLogger(__name__)
 
+
+# ============================================
+# Custom Exception Classes
+# ============================================
+class ClassificationQuotaError(RuntimeError):
+    """Raised when Gemini API quota is exhausted after all retries."""
+    pass
+
+
+class ClassificationAuthError(RuntimeError):
+    """Raised when Vertex AI authentication fails."""
+    pass
+
+
+class ClassificationModelError(RuntimeError):
+    """Raised when the Gemini model rejects the request (e.g., no JSON mode)."""
+    pass
+
+
+class ClassificationTimeoutError(RuntimeError):
+    """Raised when all classification attempts timed out."""
+    pass
+
+
 # ============================================
 # Concurrency Guard (Gemini API)
 # ============================================
@@ -201,6 +225,7 @@ async def classify_text_with_gemini(text: str) -> Tuple[str, float]:
         )
 
         last_error = None
+        last_error_type = "unknown"
         for attempt in range(1, MAX_RETRIES + 1):
             try:
                 response = await asyncio.wait_for(
@@ -220,24 +245,35 @@ async def classify_text_with_gemini(text: str) -> Tuple[str, float]:
 
             except asyncio.TimeoutError:
                 last_error = f"Timeout ({timeout}s) on attempt {attempt}"
+                last_error_type = "timeout"
                 logger.warning(last_error)
             except google_exceptions.ResourceExhausted:
                 last_error = f"Quota exceeded on attempt {attempt}"
+                last_error_type = "quota"
                 logger.warning(last_error)
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                # Longer backoff for quota: 5s, 15s, 30s (quota resets are slow)
+                await asyncio.sleep(min(5 * (2 ** (attempt - 1)), 30))
             except google_exceptions.Unauthenticated as e:
                 # Don't retry auth errors — credentials are wrong, retrying won't help
-                raise RuntimeError(f"Vertex AI authentication failed: {e}") from e
+                raise ClassificationAuthError(f"Vertex AI authentication failed: {e}") from e
             except google_exceptions.InvalidArgument as e:
                 # Model doesn't support response_mime_type="application/json"
                 # (e.g., GEMINI_MODEL_ID overridden to older model). Don't retry.
-                raise RuntimeError(f"Gemini model does not support JSON mode: {e}") from e
+                raise ClassificationModelError(f"Gemini model does not support JSON mode: {e}") from e
             except (google_exceptions.GoogleAPIError, IOError, json.JSONDecodeError) as e:
                 # Narrow exception catch: only retry known transient/parseable errors.
                 # Avoids swallowing KeyboardInterrupt, SystemExit, asyncio.CancelledError.
                 last_error = f"Retryable error on attempt {attempt}: {e}"
+                last_error_type = "transient"
                 logger.error(last_error)
                 await asyncio.sleep(1)
 
         logger.error(f"All {MAX_RETRIES} classification attempts failed. Last: {last_error}")
-        raise RuntimeError(f"Gemini classification failed after {MAX_RETRIES} attempts: {last_error}")
+        # Raise specific exception based on what caused the final failure
+        msg = f"Gemini classification failed after {MAX_RETRIES} attempts: {last_error}"
+        if last_error_type == "quota":
+            raise ClassificationQuotaError(msg)
+        elif last_error_type == "timeout":
+            raise ClassificationTimeoutError(msg)
+        else:
+            raise RuntimeError(msg)
