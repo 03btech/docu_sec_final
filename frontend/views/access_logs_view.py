@@ -277,9 +277,12 @@ class AccessLogsView(QWidget):
 
         search = self.search_input.text().lower()
         if search:
+            def _doc_name(l):
+                d = l.get('document')
+                return d.get('filename', '') if d else (l.get('document_name') or '')
             filtered = [
                 l for l in filtered
-                if search in l.get('document', {}).get('filename', '').lower()
+                if search in _doc_name(l).lower()
                 or search in f"{l.get('user', {}).get('first_name', '')} {l.get('user', {}).get('last_name', '')}".lower()
                 or search in l.get('action', '').lower()
             ]
@@ -293,11 +296,16 @@ class AccessLogsView(QWidget):
             self.table.insertRow(row)
             self.table.setRowHeight(row, 48)
 
-            # Document
-            doc = log.get('document', {})
-            doc_name = doc.get('filename', 'Unknown') if doc else 'Unknown'
+            # Document — fall back to stored document_name if relation is NULL (deleted doc)
+            doc = log.get('document')
+            if doc:
+                doc_name = doc.get('filename', 'Unknown')
+            else:
+                doc_name = log.get('document_name') or 'Deleted Document'
             doc_item = QTableWidgetItem(doc_name)
-            doc_item.setForeground(QColor('#1f2937'))
+            doc_item.setForeground(QColor('#1f2937') if doc else QColor('#9ca3af'))
+            if not doc:
+                doc_item.setToolTip('This document has been deleted')
             self.table.setItem(row, 0, doc_item)
 
             # User

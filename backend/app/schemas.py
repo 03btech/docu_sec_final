@@ -127,9 +127,10 @@ class DocumentPermissionWithUser(BaseModel):
         from_attributes = True
 
 class AccessLogBase(BaseModel):
-    document_id: int
+    document_id: Optional[int] = None
     user_id: int
     action: str
+    document_name: Optional[str] = None
 
 class AccessLogCreate(AccessLogBase):
     pass

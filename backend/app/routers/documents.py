@@ -250,8 +250,25 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
 
     # Create document record with 'queued' status
+    # Deduplicate display filename: if user already has file(s) with same name,
+    # append (1), (2), … so every filename is unique per owner.
+    display_name = file.filename
+    base, ext_part = os.path.splitext(display_name)
+    existing_names_result = await db.execute(
+        select(models.Document.filename).where(
+            models.Document.owner_id == current_user.id,
+            models.Document.filename.like(f"{base}%{ext_part}"),
+        )
+    )
+    existing_names = {r[0] for r in existing_names_result.all()}
+    if display_name in existing_names:
+        counter = 1
+        while f"{base} ({counter}){ext_part}" in existing_names:
+            counter += 1
+        display_name = f"{base} ({counter}){ext_part}"
+
     doc_data = schemas.DocumentCreate(
-        filename=file.filename,
+        filename=display_name,
         classification=models.ClassificationLevel.unclassified,
     )
     document = await crud.create_document(db, doc_data, current_user.id, str(file_path))

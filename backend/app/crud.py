@@ -347,7 +347,16 @@ async def user_can_access_document(db: AsyncSession, user_id: int, doc_id: int):
     return False
 
 async def create_access_log(db: AsyncSession, log: schemas.AccessLogCreate):
-    db_log = models.AccessLog(**log.dict())
+    data = log.dict()
+    # Resolve and store document_name for audit persistence
+    if data.get('document_id') and not data.get('document_name'):
+        result = await db.execute(
+            select(models.Document.filename).where(models.Document.id == data['document_id'])
+        )
+        filename = result.scalar()
+        if filename:
+            data['document_name'] = filename
+    db_log = models.AccessLog(**data)
     db.add(db_log)
     await db.commit()
     await db.refresh(db_log)

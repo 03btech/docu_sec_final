@@ -84,6 +84,37 @@ async def lifespan(app: FastAPI):
             ON documents (classification_status);
         """))
 
+        # Preserve access logs when documents are deleted (audit trail)
+        await conn.execute(text(
+            "ALTER TABLE access_logs ADD COLUMN IF NOT EXISTS document_name VARCHAR(255);"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE access_logs ALTER COLUMN document_id DROP NOT NULL;"
+        ))
+        # Change FK cascade from CASCADE to SET NULL
+        await conn.execute(text("""
+            DO $$ BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.table_constraints
+                    WHERE constraint_name = 'access_logs_document_id_fkey'
+                    AND table_name = 'access_logs'
+                ) THEN
+                    ALTER TABLE access_logs DROP CONSTRAINT access_logs_document_id_fkey;
+                    ALTER TABLE access_logs
+                        ADD CONSTRAINT access_logs_document_id_fkey
+                        FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """))
+        # Backfill document_name for existing access logs that don't have it
+        await conn.execute(text("""
+            UPDATE access_logs
+            SET document_name = d.filename
+            FROM documents d
+            WHERE access_logs.document_id = d.id
+              AND access_logs.document_name IS NULL;
+        """))
+
     # Verify Vertex AI credentials on startup (fail-fast for misconfigurations)
     # P2-15 FIX: Synchronous call — lifespan blocks requests until yield anyway
     try:

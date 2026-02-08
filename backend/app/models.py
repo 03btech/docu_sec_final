@@ -72,7 +72,7 @@ class Document(Base):
 
     owner = relationship("User", back_populates="documents")
     document_permissions = relationship("DocumentPermission", back_populates="document", cascade="all, delete-orphan")
-    access_logs = relationship("AccessLog", back_populates="document", cascade="all, delete-orphan")
+    access_logs = relationship("AccessLog", back_populates="document")
 
 class DocumentPermission(Base):
     __tablename__ = "document_permissions"
@@ -89,10 +89,11 @@ class AccessLog(Base):
     __tablename__ = "access_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     access_time = Column(TIMESTAMP(timezone=True), server_default=func.now())
     action = Column(String(50), nullable=False)
+    document_name = Column(String(255), nullable=True)
 
     document = relationship("Document", back_populates="access_logs")
     user = relationship("User", back_populates="access_logs")
