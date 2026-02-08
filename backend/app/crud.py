@@ -98,6 +98,31 @@ async def get_departments(db: AsyncSession):
     result = await db.execute(select(models.Department))
     return result.scalars().all()
 
+async def update_department(db: AsyncSession, dept_id: int, name: str):
+    result = await db.execute(select(models.Department).where(models.Department.id == dept_id))
+    dept = result.scalar_one_or_none()
+    if not dept:
+        return None
+    dept.name = name
+    await db.commit()
+    await db.refresh(dept)
+    return dept
+
+async def delete_department(db: AsyncSession, dept_id: int):
+    result = await db.execute(select(models.Department).where(models.Department.id == dept_id))
+    dept = result.scalar_one_or_none()
+    if not dept:
+        return False
+    # Unassign users from this department before deleting
+    await db.execute(
+        models.User.__table__.update()
+        .where(models.User.department_id == dept_id)
+        .values(department_id=None)
+    )
+    await db.delete(dept)
+    await db.commit()
+    return True
+
 async def get_all_users(db: AsyncSession, exclude_user_id: Optional[int] = None, search: Optional[str] = None):
     """Get all users with optional search and exclusion."""
     query = select(models.User)
@@ -265,14 +290,13 @@ async def get_shared_documents_for_user(db: AsyncSession, user_id: int):
     return result.scalars().all()
 
 async def get_department_documents(db: AsyncSession, department_id: int, user_id: int):
-    # Get all documents from users in the same department (excluding user's own documents)
+    # Get all documents from users in the same department (including user's own)
     # This includes: public, internal, and unclassified documents from department
     # Confidential documents require explicit sharing permissions
     result = await db.execute(
         select(models.Document)
         .join(models.User, models.Document.owner_id == models.User.id)
         .where(
-            models.Document.owner_id != user_id,
             models.User.department_id == department_id,
             models.Document.classification.in_([
                 models.ClassificationLevel.public,
@@ -458,19 +482,23 @@ async def get_dashboard_summary(db: AsyncSession, current_user: models.User):
     )
     shared_documents = shared_docs.scalar()
 
-    # Count internal documents from same department (not owned)
+    # Count department documents (public, internal, unclassified) from same department
     if current_user.department_id:
-        internal_dept_docs = await db.execute(
-            select(func.count(models.Document.id)).where(
-                models.Document.classification == models.ClassificationLevel.internal,
-                models.Document.owner_id != current_user.id
-            ).join(models.User, models.Document.owner_id == models.User.id).where(
-                models.User.department_id == current_user.department_id
+        dept_docs = await db.execute(
+            select(func.count(models.Document.id))
+            .join(models.User, models.Document.owner_id == models.User.id)
+            .where(
+                models.User.department_id == current_user.department_id,
+                models.Document.classification.in_([
+                    models.ClassificationLevel.public,
+                    models.ClassificationLevel.internal,
+                    models.ClassificationLevel.unclassified
+                ])
             )
         )
-        internal_department_documents = internal_dept_docs.scalar()
+        department_documents = dept_docs.scalar()
     else:
-        internal_department_documents = 0
+        department_documents = 0
 
     # Count documents by classification
     classification_counts = await db.execute(
@@ -521,7 +549,7 @@ async def get_dashboard_summary(db: AsyncSession, current_user: models.User):
         "total_documents": total_documents,
         "owned_documents": owned_documents,
         "shared_documents": shared_documents,
-        "internal_department_documents": internal_department_documents,
+        "internal_department_documents": department_documents,
         "classification_summary": classification_summary,
         "recent_security_logs": recent_security_logs,
         "recent_access_logs": recent_access_logs

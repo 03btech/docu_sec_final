@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QFrame, QWidget, QComboBox
-from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtCore import pyqtSignal, Qt, QPoint
 from PyQt6.QtGui import QIcon
 from api.client import APIClient
 import requests
@@ -11,15 +11,68 @@ class SignupWindow(QDialog):
         super().__init__()
         self.api_client = api_client
         self.setWindowTitle("Create Account")
-        self.setFixedSize(480, 780)
+        self.setFixedSize(480, 820)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.departments = []
+        self.dragging = False
+        self.drag_position = QPoint()
         self.setup_ui()
         self.load_departments()
 
     def setup_ui(self):
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+
+        # Custom Title Bar (matching login window)
+        title_bar = QWidget()
+        title_bar.setFixedHeight(35)
+        title_bar.setStyleSheet("""
+            QWidget {
+                background-color: #1f2937;
+                border-top-left-radius: 10px;
+                border-top-right-radius: 10px;
+            }
+        """)
+        title_bar_layout = QHBoxLayout(title_bar)
+        title_bar_layout.setContentsMargins(10, 0, 5, 0)
+        title_bar_layout.setSpacing(0)
+
+        title_label = QLabel("Document Security - Create Account")
+        title_label.setStyleSheet("""
+            QLabel {
+                color: white; font-size: 13px; font-weight: bold;
+                background: transparent; border: none;
+            }
+        """)
+        title_bar_layout.addWidget(title_label)
+        title_bar_layout.addStretch()
+
+        minimize_btn = QPushButton("−")
+        minimize_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent; border: none; color: white;
+                font-size: 16px; font-weight: bold; padding: 5px;
+                min-width: 35px; max-width: 35px; min-height: 25px; max-height: 25px; border-radius: 0px;
+            }
+            QPushButton:hover { background-color: rgba(255,255,255,0.1); }
+        """)
+        minimize_btn.clicked.connect(self.showMinimized)
+        title_bar_layout.addWidget(minimize_btn)
+
+        close_btn = QPushButton("✕")
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent; border: none; color: white;
+                font-size: 16px; font-weight: bold; padding: 5px;
+                min-width: 35px; max-width: 35px; min-height: 25px; max-height: 25px; border-radius: 0px;
+            }
+            QPushButton:hover { background-color: #e74c3c; }
+        """)
+        close_btn.clicked.connect(self.close)
+        title_bar_layout.addWidget(close_btn)
+
+        main_layout.addWidget(title_bar)
         
         background = QWidget()
         background.setStyleSheet("""
@@ -37,8 +90,8 @@ class SignupWindow(QDialog):
         card.setStyleSheet("""
             QFrame {
                 background-color: white;
-                border-radius: 20px;
-                border: 1px solid #e0e4e7;
+                border-radius: 16px;
+                border: 1px solid #e5e7eb;
             }
         """)
         
@@ -51,7 +104,7 @@ class SignupWindow(QDialog):
             QLabel {
                 font-size: 28px;
                 font-weight: bold;
-                color: #2c3e50;
+                color: #1f2937;
                 margin-bottom: 8px;
                 border: none;
             }
@@ -62,11 +115,11 @@ class SignupWindow(QDialog):
         input_style = """
             QLineEdit, QComboBox {
                 padding: 12px 20px;
-                border: 2px solid #bdc3c7;
-                border-radius: 25px;
+                border: 2px solid #d1d5db;
+                border-radius: 10px;
                 font-size: 14px;
                 background-color: white;
-                color: #2c3e50;
+                color: #1f2937;
                 min-height: 20px;
             }
             QLineEdit:focus, QComboBox:focus {
@@ -75,9 +128,7 @@ class SignupWindow(QDialog):
             }
             QComboBox::drop-down {
                 border: none;
-            }
-            QComboBox::down-arrow {
-                image: url(assets/icons/down_arrow.png); 
+                width: 30px;
             }
         """
 
@@ -125,13 +176,14 @@ class SignupWindow(QDialog):
                 background-color: #27ae60;
                 color: white;
                 border: none;
-                border-radius: 25px;
+                border-radius: 10px;
                 padding: 15px;
                 font-size: 16px;
                 font-weight: bold;
             }
             QPushButton:hover { background-color: #229954; }
             QPushButton:pressed { background-color: #1e8449; }
+            QPushButton:disabled { background-color: #d1d5db; color: #9ca3af; }
         """)
         self.signup_button.clicked.connect(self.signup)
         card_layout.addWidget(self.signup_button)
@@ -220,3 +272,19 @@ class SignupWindow(QDialog):
 
     def show_login(self):
         self.accept()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and event.position().y() < 35:
+            self.dragging = True
+            self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.dragging and event.buttons() == Qt.MouseButton.LeftButton:
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.dragging = False
+            event.accept()

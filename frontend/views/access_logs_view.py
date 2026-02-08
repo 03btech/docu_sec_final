@@ -22,7 +22,7 @@ class AccessLogsView(QWidget):
         
         # Title
         title = QLabel("Access Logs")
-        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #2c3e50; margin: 10px;")
+        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #1f2937; margin: 10px;")
         layout.addWidget(title)
         
         # Description
@@ -82,7 +82,7 @@ class AccessLogsView(QWidget):
             QTableWidget {
                 background-color: white;
                 gridline-color: #ecf0f1;
-                border: 1px solid #bdc3c7;
+                border: 1px solid #d1d5db;
                 border-radius: 5px;
             }
             QTableWidget::item {
@@ -112,7 +112,6 @@ class AccessLogsView(QWidget):
         """Fetch access logs from the API"""
         # Check if user is admin before attempting to fetch logs
         if not self.api_client.is_admin():
-            print("⚠️ Access Logs: User is not admin, skipping refresh")
             self.auto_refresh_timer.stop()
             self.status_label.setText("Admin access required")
             return
@@ -127,30 +126,23 @@ class AccessLogsView(QWidget):
             
             if response.status_code == 200:
                 new_logs = response.json()
-                print(f"✅ Access Logs: Received {len(new_logs)} logs from backend")
                 
                 # Store the original logs
                 self.logs = new_logs
                 
                 # Apply current filters to display
                 self.apply_filters()
+                self.status_label.setText(
+                    f"Loaded {len(self.logs)} access logs (Last updated: {datetime.now().strftime('%H:%M:%S')})")
             elif response.status_code == 401:
                 # User is not authenticated - stop timer to prevent repeated errors
-                print("⚠️ Access Logs: Not authenticated, stopping auto-refresh")
                 self.auto_refresh_timer.stop()
                 self.status_label.setText("Not authenticated")
-                return
-                
-                self.status_label.setText(f"Loaded {len(self.logs)} access logs (Last updated: {datetime.now().strftime('%H:%M:%S')})")
             else:
                 error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
-                print(f"❌ Access Logs Error: {error_msg}")
                 self.status_label.setText(f"Error: {response.status_code}")
                 QMessageBox.warning(self, "Error", f"Failed to load access logs: {error_msg}")
         except Exception as e:
-            print(f"❌ Access Logs Exception: {str(e)}")
-            import traceback
-            traceback.print_exc()
             self.status_label.setText(f"Error: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to load access logs: {str(e)}")
 
@@ -239,4 +231,3 @@ class AccessLogsView(QWidget):
         super().hideEvent(event)
         if self.auto_refresh_timer.isActive():
             self.auto_refresh_timer.stop()
-            print("ℹ️ Access Logs: Timer stopped (view hidden)")

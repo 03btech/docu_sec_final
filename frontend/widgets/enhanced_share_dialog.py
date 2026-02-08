@@ -91,7 +91,8 @@ class UserSearchWidget(QWidget):
             self.users_cache = self.api_client.get_users()
             self.populate_list(self.users_cache)
         except Exception as e:
-            print(f"Failed to load users: {e}")
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Error", f"Failed to load users: {e}")
     
     def on_search_changed(self, text):
         """Filter users based on search text"""

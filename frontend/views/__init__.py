@@ -1,3 +1,4 @@
+from .base_document_view import BaseDocumentView
 from .dashboard_view import DashboardView
 from .my_documents_view import MyDocumentsView
 from .department_documents_view import DepartmentDocumentsView
@@ -11,6 +12,7 @@ from .signup_window import SignupWindow
 from .main_window import MainWindow
 
 __all__ = [
+    'BaseDocumentView',
     'DashboardView',
     'MyDocumentsView',
     'DepartmentDocumentsView',

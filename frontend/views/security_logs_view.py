@@ -23,7 +23,7 @@ class SecurityLogsView(QWidget):
         
         # Title
         title = QLabel("Security Logs")
-        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #2c3e50; margin: 10px;")
+        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #1f2937; margin: 10px;")
         layout.addWidget(title)
         
         # Description
@@ -37,8 +37,9 @@ class SecurityLogsView(QWidget):
         # Activity type filter
         filter_layout.addWidget(QLabel("Activity Type:"))
         self.activity_filter = QComboBox()
-        self.activity_filter.addItems(["All", "Phone Detected", "Screenshot Attempt", "No Person Detected"])
-        self.activity_filter.currentTextChanged.connect(self.apply_filters)
+        self.activity_filter.addItem("All", "all")
+        # Populated dynamically after data loads
+        self.activity_filter.currentIndexChanged.connect(self.apply_filters)
         filter_layout.addWidget(self.activity_filter)
         
         # Search filter
@@ -84,7 +85,7 @@ class SecurityLogsView(QWidget):
             QTableWidget {
                 background-color: white;
                 gridline-color: #ecf0f1;
-                border: 1px solid #bdc3c7;
+                border: 1px solid #d1d5db;
                 border-radius: 5px;
             }
             QTableWidget::item {
@@ -111,7 +112,7 @@ class SecurityLogsView(QWidget):
         self.details_text.setStyleSheet("""
             QTextEdit {
                 background-color: #f8f9fa;
-                border: 1px solid #bdc3c7;
+                border: 1px solid #d1d5db;
                 border-radius: 5px;
                 padding: 10px;
                 font-family: monospace;
@@ -133,7 +134,6 @@ class SecurityLogsView(QWidget):
         """Fetch security logs from the API"""
         # Check if user is admin before attempting to fetch logs
         if not self.api_client.is_admin():
-            print("⚠️ Security Logs: User is not admin, skipping refresh")
             self.auto_refresh_timer.stop()
             self.status_label.setText("Admin access required")
             return
@@ -148,10 +148,12 @@ class SecurityLogsView(QWidget):
             
             if response.status_code == 200:
                 new_logs = response.json()
-                print(f"✅ Security Logs: Received {len(new_logs)} logs from backend")
                 
                 # Store the original logs
                 self.logs = new_logs
+                
+                # Rebuild activity type filter from actual data
+                self._rebuild_activity_filter()
                 
                 # Apply current filters to display
                 self.apply_filters()
@@ -159,30 +161,47 @@ class SecurityLogsView(QWidget):
                 self.status_label.setText(f"Loaded {len(self.logs)} security logs (Last updated: {datetime.now().strftime('%H:%M:%S')})")
             elif response.status_code == 401:
                 # User is not authenticated - stop timer to prevent repeated errors
-                print("⚠️ Security Logs: Not authenticated, stopping auto-refresh")
                 self.auto_refresh_timer.stop()
                 self.status_label.setText("Not authenticated")
                 return
             else:
                 error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
-                print(f"❌ Security Logs Error: {error_msg}")
                 self.status_label.setText(f"Error: {response.status_code}")
                 QMessageBox.warning(self, "Error", f"Failed to load security logs: {error_msg}")
         except Exception as e:
-            print(f"❌ Security Logs Exception: {str(e)}")
-            import traceback
-            traceback.print_exc()
             self.status_label.setText(f"Error: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to load security logs: {str(e)}")
+
+    def _rebuild_activity_filter(self):
+        """Populate activity type filter from actual log data."""
+        current_data = self.activity_filter.currentData()
+        self.activity_filter.blockSignals(True)
+        self.activity_filter.clear()
+        self.activity_filter.addItem("All", "all")
+
+        seen = set()
+        for log in self.logs:
+            raw = log.get('activity_type', '')
+            if raw and raw not in seen:
+                seen.add(raw)
+                label = raw.replace('_', ' ').title()
+                self.activity_filter.addItem(label, raw)
+
+        # Restore previous selection if still present
+        if current_data:
+            idx = self.activity_filter.findData(current_data)
+            if idx >= 0:
+                self.activity_filter.setCurrentIndex(idx)
+        self.activity_filter.blockSignals(False)
 
     def apply_filters(self):
         """Apply filters to the logs"""
         filtered_logs = self.logs
         
-        # Filter by activity type
-        activity_filter = self.activity_filter.currentText()
-        if activity_filter != "All":
-            filtered_logs = [log for log in filtered_logs if activity_filter.lower() in log.get('activity_type', '').lower()]
+        # Filter by activity type (exact match on raw value stored in userData)
+        raw_type = self.activity_filter.currentData()
+        if raw_type and raw_type != "all":
+            filtered_logs = [log for log in filtered_logs if log.get('activity_type', '') == raw_type]
         
         # Filter by search text
         search_text = self.search_input.text().lower()
@@ -315,4 +334,3 @@ class SecurityLogsView(QWidget):
         super().hideEvent(event)
         if self.auto_refresh_timer.isActive():
             self.auto_refresh_timer.stop()
-            print("ℹ️ Security Logs: Timer stopped (view hidden)")

@@ -49,10 +49,8 @@ class DocumentTable(QTableWidget):
             self.setItem(row, 1, class_item)
             
             owner = doc.get('owner')
-            print(f"DEBUG Table: Row {row}, owner = {owner}, type = {type(owner)}")
             if owner and isinstance(owner, dict):
                 username = owner.get('username', '')
-                print(f"DEBUG Table: Setting owner username = {username}")
                 self.setItem(row, 2, QTableWidgetItem(username))
             elif owner:
                 self.setItem(row, 2, QTableWidgetItem(str(owner)))

@@ -42,6 +42,27 @@ class APIClient:
             return response.json()
         return []
 
+    def create_department(self, name: str) -> tuple[bool, str]:
+        """Create a new department."""
+        response = self.session.post(f"{self.base_url}/admin/departments", json={"name": name})
+        if response.status_code == 200:
+            return True, "Department created successfully"
+        return False, response.json().get("detail", "Unknown error")
+
+    def update_department(self, dept_id: int, name: str) -> tuple[bool, str]:
+        """Rename a department."""
+        response = self.session.put(f"{self.base_url}/admin/departments/{dept_id}", json={"name": name})
+        if response.status_code == 200:
+            return True, "Department updated successfully"
+        return False, response.json().get("detail", "Unknown error")
+
+    def delete_department(self, dept_id: int) -> tuple[bool, str]:
+        """Delete a department (unassigns its users)."""
+        response = self.session.delete(f"{self.base_url}/admin/departments/{dept_id}")
+        if response.status_code == 200:
+            return True, "Department deleted successfully"
+        return False, response.json().get("detail", "Unknown error")
+
     def get_current_user(self) -> Optional[Dict[str, Any]]:
         """Get current user info including role."""
         response = self.session.get(f"{self.base_url}/auth/me")
@@ -92,25 +113,13 @@ class APIClient:
 
     def view_document(self, doc_id: int) -> Optional[bytes]:
         """View a document - returns file content."""
-        print(f"🌐 API Client: GET /documents/view/{doc_id}")
         try:
             response = self.session.get(f"{self.base_url}/documents/view/{doc_id}")
-            print(f"🌐 API Response: Status={response.status_code}")
-            
             if response.status_code == 200:
-                print(f"✅ Success: Received {len(response.content)} bytes")
                 return response.content
-            elif response.status_code == 403:
-                print(f"❌ Forbidden (403): {response.text}")
-                return None
-            elif response.status_code == 404:
-                print(f"❌ Not Found (404): {response.text}")
-                return None
             else:
-                print(f"❌ Error ({response.status_code}): {response.text}")
                 return None
         except Exception as e:
-            print(f"❌ Exception in API call: {type(e).__name__}: {e}")
             raise
     
     def get_document_details(self, doc_id: int) -> Optional[Dict[str, Any]]:

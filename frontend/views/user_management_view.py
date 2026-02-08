@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
                              QLineEdit, QMessageBox, QComboBox, QFrame, QScrollArea, 
                              QTableWidget, QTableWidgetItem, QDialog, QDialogButtonBox, 
-                             QGroupBox, QHeaderView, QMenu)
+                             QGroupBox, QHeaderView, QMenu, QTabWidget, QInputDialog)
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QColor
 import qtawesome as qta
@@ -168,7 +168,7 @@ class UserEditDialog(QDialog):
         input_style = """
             QLineEdit, QComboBox {
                 padding: 10px 15px;
-                border: 2px solid #bdc3c7;
+                border: 2px solid #d1d5db;
                 border-radius: 6px;
                 font-size: 14px;
                 background-color: white;
@@ -414,13 +414,13 @@ class UserManagementView(QWidget):
             QLabel {
                 font-size: 28px;
                 font-weight: bold;
-                color: #0f1016;
+                color: #1f2937;
             }
         """)
         header_layout.addWidget(title)
         
         # Description
-        description = QLabel("Search, view, and manage user accounts")
+        description = QLabel("Manage user accounts and departments")
         description.setStyleSheet("""
             QLabel {
                 font-size: 14px;
@@ -430,6 +430,60 @@ class UserManagementView(QWidget):
         header_layout.addWidget(description)
         
         main_layout.addWidget(header_widget)
+
+        # Tab widget for Users / Departments
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #e5e7eb;
+                border-radius: 8px;
+                background: white;
+            }
+            QTabBar::tab {
+                padding: 10px 24px;
+                font-size: 14px;
+                font-weight: 500;
+                color: #6b7280;
+                border: none;
+                border-bottom: 2px solid transparent;
+                margin-right: 4px;
+            }
+            QTabBar::tab:selected {
+                color: #27ae60;
+                border-bottom: 2px solid #27ae60;
+            }
+            QTabBar::tab:hover:!selected {
+                color: #374151;
+            }
+        """)
+        main_layout.addWidget(self.tab_widget)
+
+        # ── Users Tab ──
+        users_tab = QWidget()
+        users_layout = QVBoxLayout(users_tab)
+        users_layout.setContentsMargins(0, 12, 0, 0)
+        users_layout.setSpacing(12)
+
+        self._setup_users_tab(users_layout)
+        self.tab_widget.addTab(users_tab, qta.icon('fa5s.users', color='#6b7280'), "Users")
+
+        # ── Departments Tab ──
+        dept_tab = QWidget()
+        dept_layout = QVBoxLayout(dept_tab)
+        dept_layout.setContentsMargins(0, 12, 0, 0)
+        dept_layout.setSpacing(12)
+
+        self._setup_departments_tab(dept_layout)
+        self.tab_widget.addTab(dept_tab, qta.icon('fa5s.building', color='#6b7280'), "Departments")
+
+        # Load initial data
+        self.refresh_users()
+        self.refresh_departments()
+
+    # ──────────────────────────────────────────────
+    # Users tab setup
+    # ──────────────────────────────────────────────
+    def _setup_users_tab(self, layout):
         
         # Action bar with search
         action_bar = QHBoxLayout()
@@ -514,7 +568,7 @@ class UserManagementView(QWidget):
         
         action_bar.addStretch()
         
-        main_layout.addLayout(action_bar)
+        layout.addLayout(action_bar)
         
         # Users table with modern styling
         self.users_table = QTableWidget()
@@ -576,7 +630,7 @@ class UserManagementView(QWidget):
             }
             QTableWidget::item:selected {
                 background-color: #f9fafb;
-                color: #0f1016;
+                color: #1f2937;
             }
             QHeaderView::section {
                 background-color: #f9fafb;
@@ -591,10 +645,7 @@ class UserManagementView(QWidget):
             }
         """)
         
-        main_layout.addWidget(self.users_table)
-        
-        # Load initial data
-        self.refresh_users()
+        layout.addWidget(self.users_table)
     
     def refresh_users(self, clear_search=False):
         """Refresh the users list."""
@@ -638,7 +689,7 @@ class UserManagementView(QWidget):
             username_label.setStyleSheet("""
                 font-size: 14px;
                 font-weight: 600;
-                color: #0f1016;
+                color: #1f2937;
             """)
             username_layout.addWidget(username_label)
             username_layout.addStretch()
@@ -718,3 +769,175 @@ class UserManagementView(QWidget):
     def refresh_data(self):
         """Refresh view data when tab is shown."""
         self.refresh_users()
+        self.refresh_departments()
+
+    # ──────────────────────────────────────────────
+    # Departments tab
+    # ──────────────────────────────────────────────
+    def _setup_departments_tab(self, layout):
+        # Action bar
+        action_bar = QHBoxLayout()
+        action_bar.setSpacing(12)
+
+        add_dept_btn = QPushButton("  Add Department")
+        add_dept_btn.setIcon(qta.icon('fa5s.plus', color='white'))
+        add_dept_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_dept_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60; color: white; border: none;
+                border-radius: 8px; padding: 8px 16px; font-size: 14px; font-weight: 500;
+            }
+            QPushButton:hover { background-color: #229954; }
+        """)
+        add_dept_btn.clicked.connect(self.add_department)
+        action_bar.addWidget(add_dept_btn)
+
+        action_bar.addStretch()
+
+        refresh_dept_btn = QPushButton("Refresh")
+        refresh_dept_btn.setIcon(qta.icon('fa5s.sync-alt', color='#374151'))
+        refresh_dept_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_dept_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #ffffff; color: #374151; border: 1px solid #d1d5db;
+                border-radius: 8px; padding: 8px 16px; font-size: 14px; font-weight: 500;
+            }
+            QPushButton:hover { background-color: #f9fafb; border-color: #9ca3af; }
+        """)
+        refresh_dept_btn.clicked.connect(self.refresh_departments)
+        action_bar.addWidget(refresh_dept_btn)
+
+        layout.addLayout(action_bar)
+
+        # Departments table
+        self.dept_table = QTableWidget()
+        self.dept_table.setColumnCount(3)
+        self.dept_table.setHorizontalHeaderLabels(["ID", "Department Name", ""])
+
+        vh = self.dept_table.verticalHeader()
+        if vh:
+            vh.setVisible(False)
+            vh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+            vh.setDefaultSectionSize(50)
+
+        self.dept_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.dept_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.dept_table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.dept_table.setShowGrid(False)
+
+        hh = self.dept_table.horizontalHeader()
+        if hh:
+            hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
+            self.dept_table.setColumnWidth(0, 60)
+            hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+            hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+            self.dept_table.setColumnWidth(2, 140)
+
+        self.dept_table.setStyleSheet("""
+            QTableWidget {
+                background-color: #ffffff; border: 1px solid #e5e7eb;
+                border-radius: 8px; gridline-color: transparent;
+            }
+            QTableWidget::item {
+                padding: 0px; border-bottom: 1px solid #f3f4f6;
+            }
+            QTableWidget::item:selected {
+                background-color: #f9fafb; color: #1f2937;
+            }
+            QHeaderView::section {
+                background-color: #f9fafb; color: #6b7280; padding: 12px 8px;
+                border: none; border-bottom: 2px solid #e5e7eb;
+                font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;
+            }
+        """)
+        layout.addWidget(self.dept_table)
+
+    def refresh_departments(self):
+        """Reload departments into the table."""
+        self.departments = self.api_client.get_departments()
+        self.dept_table.setRowCount(0)
+        for dept in self.departments:
+            row = self.dept_table.rowCount()
+            self.dept_table.insertRow(row)
+            self.dept_table.setRowHeight(row, 50)
+
+            # ID
+            id_item = QTableWidgetItem(str(dept['id']))
+            id_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            id_item.setForeground(QColor('#6b7280'))
+            self.dept_table.setItem(row, 0, id_item)
+
+            # Name
+            name_item = QTableWidgetItem(dept['name'])
+            name_item.setForeground(QColor('#1f2937'))
+            self.dept_table.setItem(row, 1, name_item)
+
+            # Action buttons
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(4, 4, 4, 4)
+            actions_layout.setSpacing(6)
+
+            edit_btn = QPushButton()
+            edit_btn.setIcon(qta.icon('fa5s.edit', color='#3b82f6'))
+            edit_btn.setToolTip("Rename")
+            edit_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            edit_btn.setFixedSize(32, 32)
+            edit_btn.setStyleSheet("""
+                QPushButton { background: transparent; border: none; border-radius: 6px; }
+                QPushButton:hover { background-color: #dbeafe; }
+            """)
+            dept_id = dept['id']
+            dept_name = dept['name']
+            edit_btn.clicked.connect(lambda checked, d=dept_id, n=dept_name: self.rename_department(d, n))
+            actions_layout.addWidget(edit_btn)
+
+            del_btn = QPushButton()
+            del_btn.setIcon(qta.icon('fa5s.trash-alt', color='#ef4444'))
+            del_btn.setToolTip("Delete")
+            del_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            del_btn.setFixedSize(32, 32)
+            del_btn.setStyleSheet("""
+                QPushButton { background: transparent; border: none; border-radius: 6px; }
+                QPushButton:hover { background-color: #fee2e2; }
+            """)
+            del_btn.clicked.connect(lambda checked, d=dept_id, n=dept_name: self.delete_department(d, n))
+            actions_layout.addWidget(del_btn)
+
+            actions_layout.addStretch()
+            self.dept_table.setCellWidget(row, 2, actions_widget)
+
+    def add_department(self):
+        """Prompt for a department name and create it."""
+        name, ok = QInputDialog.getText(self, "Add Department", "Department name:")
+        if ok and name.strip():
+            success, msg = self.api_client.create_department(name.strip())
+            if success:
+                self.refresh_departments()
+            else:
+                QMessageBox.critical(self, "Error", f"Failed to create department: {msg}")
+
+    def rename_department(self, dept_id: int, current_name: str):
+        """Prompt for new name and update."""
+        name, ok = QInputDialog.getText(self, "Rename Department", "New name:", text=current_name)
+        if ok and name.strip() and name.strip() != current_name:
+            success, msg = self.api_client.update_department(dept_id, name.strip())
+            if success:
+                self.refresh_departments()
+            else:
+                QMessageBox.critical(self, "Error", f"Failed to rename department: {msg}")
+
+    def delete_department(self, dept_id: int, name: str):
+        """Confirm and delete a department."""
+        reply = QMessageBox.question(
+            self, "Confirm Delete",
+            f"Delete department '{name}'?\n\nAll users in this department will be unassigned.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            success, msg = self.api_client.delete_department(dept_id)
+            if success:
+                self.refresh_departments()
+            else:
+                QMessageBox.critical(self, "Error", f"Failed to delete department: {msg}")

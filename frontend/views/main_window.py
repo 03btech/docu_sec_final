@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QMainWindow, QVBoxLayout, QHBoxLayout, QWidget, QTreeWidget, QTreeWidgetItem, QStackedWidget, QLabel, QPushButton, QFrame, QStyle
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon, QFont
+from PyQt6.QtGui import QIcon, QFont, QShortcut, QKeySequence
 import qtawesome as qta
 from api.client import APIClient
 from views.dashboard_view import DashboardView
@@ -39,9 +39,9 @@ class MainWindow(QMainWindow):
 
         main_layout = QHBoxLayout(central_widget)
 
-        # Navigation Panel (Left)
+        # Navigation Panel (Left) — narrowed from 350 to 260
         self.nav_panel = QWidget()
-        self.nav_panel.setFixedWidth(350)
+        self.nav_panel.setFixedWidth(260)
         nav_layout = QVBoxLayout(self.nav_panel)
 
         # User Info Card
@@ -63,7 +63,7 @@ class MainWindow(QMainWindow):
         self.username_label.setStyleSheet("""
             font-size: 16px;
             font-weight: bold;
-            color: #2c3e50;
+            color: #1f2937;
         """)
         user_info_layout.addWidget(self.username_label)
         
@@ -111,7 +111,7 @@ class MainWindow(QMainWindow):
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
         separator.setFrameShadow(QFrame.Shadow.Sunken)
-        separator.setStyleSheet("background-color: #bdc3c7;")
+        separator.setStyleSheet("background-color: #e5e7eb;")
         nav_layout.addWidget(separator)
 
         # Navigation Buttons
@@ -125,7 +125,8 @@ class MainWindow(QMainWindow):
         nav_layout.addWidget(nav_label)
         self.nav_tree = QTreeWidget()
         self.nav_tree.setHeaderHidden(True)
-        self.nav_tree.setRootIsDecorated(True)
+        self.nav_tree.setRootIsDecorated(False)
+        self.nav_tree.setIndentation(16)
         
         # Create top-level items with Font Awesome icons
         icon_color = '#546e7a'
@@ -165,29 +166,23 @@ class MainWindow(QMainWindow):
         self.admin_item.setText(0, "Administration")
         self.admin_item.setIcon(0, qta.icon('fa5s.user-shield', color=icon_color))
         
-        # Logs parent item (admin-only)
-        self.logs_item = QTreeWidgetItem(self.admin_item)
-        self.logs_item.setText(0, "System Logs")
-        self.logs_item.setIcon(0, qta.icon('fa5s.clipboard-list', color=icon_color))
-        
-        # Add log sub-items
-        self.access_logs_item = QTreeWidgetItem(self.logs_item)
+        # Direct children of Administration
+        self.access_logs_item = QTreeWidgetItem(self.admin_item)
         self.access_logs_item.setText(0, "Access Logs")
         self.access_logs_item.setIcon(0, qta.icon('fa5s.user-check', color=icon_color))
         
-        self.security_logs_item = QTreeWidgetItem(self.logs_item)
+        self.security_logs_item = QTreeWidgetItem(self.admin_item)
         self.security_logs_item.setText(0, "Security Logs")
         self.security_logs_item.setIcon(0, qta.icon('fa5s.shield-alt', color=icon_color))
+        
+        self.user_mgmt_item = QTreeWidgetItem(self.admin_item)
+        self.user_mgmt_item.setText(0, "User Management")
+        self.user_mgmt_item.setIcon(0, qta.icon('fa5s.users-cog', color=icon_color))
         
         # Settings item (available to all users)
         settings_item = QTreeWidgetItem(self.nav_tree)
         settings_item.setText(0, "Settings")
         settings_item.setIcon(0, qta.icon('fa5s.user-cog', color=icon_color))
-        
-        # User Management (admin-only, separate from Settings)
-        self.user_mgmt_item = QTreeWidgetItem(self.nav_tree)
-        self.user_mgmt_item.setText(0, "User Management")
-        self.user_mgmt_item.setIcon(0, qta.icon('fa5s.users-cog', color=icon_color))
         
         self.nav_tree.expandAll()
         self.nav_tree.itemClicked.connect(self.change_view)
@@ -214,45 +209,30 @@ class MainWindow(QMainWindow):
         self.content_stack = QStackedWidget()
         main_layout.addWidget(self.content_stack)
 
-        # Add views
+        # Create all views
         self.dashboard_view = DashboardView(self.api_client)
-        self.content_stack.addWidget(self.dashboard_view)
-
         self.my_documents_view = MyDocumentsView(self.api_client)
-        self.content_stack.addWidget(self.my_documents_view)
-
         self.department_documents_view = DepartmentDocumentsView(self.api_client)
-        self.content_stack.addWidget(self.department_documents_view)
-
         self.public_documents_view = PublicDocumentsView(self.api_client)
-        self.content_stack.addWidget(self.public_documents_view)
-
         self.shared_documents_view = SharedDocumentsView(self.api_client)
-        self.content_stack.addWidget(self.shared_documents_view)
-
         self.upload_document_view = UploadDocumentView(self.api_client)
-        self.content_stack.addWidget(self.upload_document_view)
-
-        # Log views (index 6, 7)
         self.access_logs_view = AccessLogsView(self.api_client)
-        self.content_stack.addWidget(self.access_logs_view)
-
         self.security_logs_view = SecurityLogsView(self.api_client)
-        self.content_stack.addWidget(self.security_logs_view)
-        
-        # Settings view (index 9) - available to all users
         self.settings_view = SettingsView(self.api_client)
-        self.content_stack.addWidget(self.settings_view)
-        
-        # User Management view (index 10) - admin only
         self.user_management_view = UserManagementView(self.api_client)
-        self.content_stack.addWidget(self.user_management_view)
 
-        # Placeholder for other views (if needed)
-        # for i in range(0):
-        #     placeholder = QLabel(f"View {i+8} - Coming Soon")
-        #     placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        #     self.content_stack.addWidget(placeholder)
+        # View registry — maps nav tree text → (widget, admin_only)
+        self._view_map: dict[str, tuple[QWidget, bool]] = {}
+        self._register_view("Dashboard", self.dashboard_view, admin_only=True)
+        self._register_view("My Documents", self.my_documents_view)
+        self._register_view("Department Documents", self.department_documents_view)
+        self._register_view("Public Documents", self.public_documents_view)
+        self._register_view("Shared With Me", self.shared_documents_view)
+        self._register_view("Upload Document", self.upload_document_view)
+        self._register_view("Access Logs", self.access_logs_view, admin_only=True)
+        self._register_view("Security Logs", self.security_logs_view, admin_only=True)
+        self._register_view("Settings", self.settings_view)
+        self._register_view("User Management", self.user_management_view, admin_only=True)
 
         # Adjust layout for better spacing and alignment
         nav_layout.setSpacing(12)
@@ -264,24 +244,26 @@ class MainWindow(QMainWindow):
                 border: none;
                 background-color: transparent;
                 font-size: 14px;
-                color: #0f1016;
+                color: #1f2937;
                 outline: 0;
             }
             QTreeWidget::item {
-                padding: 12px;
+                padding: 10px 12px;
                 border-radius: 6px;
-                margin: 4px 0px;
+                margin: 2px 0px;
             }
             QTreeWidget::item:hover {
                 background-color: #e8f5e9;
-                color: #3cb77e;
+                color: #27ae60;
             }
             QTreeWidget::item:selected {
-                background-color: #3cb77e;
+                background-color: #27ae60;
                 color: white;
             }
             QTreeWidget::branch {
                 background-color: transparent;
+                image: none;
+                width: 0px;
             }
         """)
 
@@ -314,6 +296,16 @@ class MainWindow(QMainWindow):
                 background-color: #f8f9fa;
             }
         """)
+
+        # Keyboard shortcuts
+        QShortcut(QKeySequence("Ctrl+R"), self, lambda: self._refresh_current_view())
+        QShortcut(QKeySequence("Ctrl+U"), self, lambda: self._switch_to("Upload Document"))
+
+    def _refresh_current_view(self):
+        """Refresh whichever view is currently visible."""
+        current = self.content_stack.currentWidget()
+        if current and hasattr(current, 'refresh_data'):
+            current.refresh_data()
 
     def load_user_info(self):
         """Load and display current user information."""
@@ -374,8 +366,6 @@ class MainWindow(QMainWindow):
             self.admin_item.setHidden(role != 'admin')
             # Show/hide dashboard based on role (admin-only)
             self.dashboard_item.setHidden(role != 'admin')
-            # Show/hide User Management based on role (admin-only)
-            self.user_mgmt_item.setHidden(role != 'admin')
             
         else:
             self.username_label.setText("Guest User")
@@ -386,71 +376,41 @@ class MainWindow(QMainWindow):
             self.admin_item.setHidden(True)
             # Hide dashboard for non-logged-in users
             self.dashboard_item.setHidden(True)
-            # Hide User Management for non-logged-in users
-            self.user_mgmt_item.setHidden(True)
+
+    def _register_view(self, name: str, widget: QWidget, admin_only: bool = False):
+        """Register a view in the stack and the lookup map."""
+        self.content_stack.addWidget(widget)
+        self._view_map[name] = (widget, admin_only)
+
+    def _switch_to(self, name: str):
+        """Switch to a registered view by name, refreshing it if possible."""
+        entry = self._view_map.get(name)
+        if not entry:
+            return
+        widget, admin_only = entry
+        if admin_only and not self.api_client.is_admin():
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Access Denied",
+                                "Only administrators can access this view.")
+            return
+        self.content_stack.setCurrentWidget(widget)
+        if hasattr(widget, 'refresh_data'):
+            widget.refresh_data()
 
     def change_view(self, item, column):
         text = item.text(0)
-        if text == "Dashboard":
-            # Check if user is admin
-            if self.api_client.is_admin():
-                self.content_stack.setCurrentIndex(0)
-                self.dashboard_view.refresh_data()
-            else:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "Access Denied", "Only administrators can access the dashboard.")
-        elif text == "My Documents":
-            self.content_stack.setCurrentIndex(1)
-            self.my_documents_view.refresh_data()
-        elif text == "Department Documents":
-            self.content_stack.setCurrentIndex(2)
-            self.department_documents_view.refresh_data()
-        elif text == "Public Documents":
-            self.content_stack.setCurrentIndex(3)
-            self.public_documents_view.refresh_data()
-        elif text == "Shared With Me":
-            self.content_stack.setCurrentIndex(4)
-            self.shared_documents_view.refresh_data()
-        elif text == "Upload Document":
-            self.content_stack.setCurrentIndex(5)
-            # Upload view doesn't need refreshing
-        elif text == "Access Logs":
-            # Check if user is admin
-            if self.api_client.is_admin():
-                self.content_stack.setCurrentIndex(6)
-                self.access_logs_view.refresh_data()
-            else:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "Access Denied", "Only administrators can view access logs.")
-        elif text == "Security Logs":
-            # Check if user is admin
-            if self.api_client.is_admin():
-                self.content_stack.setCurrentIndex(7)
-                self.security_logs_view.refresh_data()
-            else:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "Access Denied", "Only administrators can view security logs.")
-        elif text == "Settings":
-            self.content_stack.setCurrentIndex(8)
-            self.settings_view.refresh_data()
-        elif text == "User Management":
-            # Check if user is admin (this is now the standalone User Management, not under admin section)
-            if self.api_client.is_admin():
-                self.content_stack.setCurrentIndex(9)
-                self.user_management_view.refresh_data()
-            else:
-                from PyQt6.QtWidgets import QMessageBox
-                QMessageBox.warning(self, "Access Denied", "Only administrators can access user management.")
+        # Ignore parent-only items that just expand/collapse
+        if text in ("Documents", "Administration"):
+            return
+        self._switch_to(text)
 
     def show_dashboard(self):
         # Only show dashboard if user is admin, otherwise show My Documents
         if self.api_client.is_admin():
             self.nav_tree.setCurrentItem(self.dashboard_item)
-            self.dashboard_view.refresh_data()
+            self._switch_to("Dashboard")
         else:
-            # Navigate to My Documents for regular users
-            self.content_stack.setCurrentIndex(1)
-            self.my_documents_view.refresh_data()
+            self._switch_to("My Documents")
 
     def logout(self):
         global _active_main_window

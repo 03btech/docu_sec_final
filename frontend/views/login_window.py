@@ -1,7 +1,29 @@
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QFrame, QWidget
-from PyQt6.QtCore import pyqtSignal, Qt, QPoint
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QFrame, QWidget, QApplication
+from PyQt6.QtCore import pyqtSignal, Qt, QPoint, QThread, pyqtSlot
 from PyQt6.QtGui import QPalette, QFont, QIcon
 from api.client import APIClient
+
+
+class LoginWorker(QThread):
+    """Worker to perform login on a background thread."""
+    success = pyqtSignal()
+    failed = pyqtSignal(str)
+
+    def __init__(self, api_client, username, password):
+        super().__init__()
+        self.api_client = api_client
+        self.username = username
+        self.password = password
+
+    def run(self):
+        try:
+            if self.api_client.login(self.username, self.password):
+                self.success.emit()
+            else:
+                self.failed.emit("Invalid credentials. Please try again.")
+        except Exception as e:
+            self.failed.emit(f"Connection error: {str(e)}")
+
 
 class LoginWindow(QDialog):
     login_successful = pyqtSignal()
@@ -9,8 +31,9 @@ class LoginWindow(QDialog):
     def __init__(self, api_client: APIClient):
         super().__init__()
         self.api_client = api_client
+        self._login_worker = None
         self.setWindowTitle("Document Security")
-        self.setFixedSize(480, 520)
+        self.setFixedSize(480, 540)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         
         # For window dragging
@@ -30,7 +53,7 @@ class LoginWindow(QDialog):
         title_bar.setFixedHeight(35)
         title_bar.setStyleSheet("""
             QWidget {
-                background-color: #2c3e50;
+                background-color: #1f2937;
                 border-top-left-radius: 10px;
                 border-top-right-radius: 10px;
             }
@@ -41,7 +64,7 @@ class LoginWindow(QDialog):
         title_bar_layout.setSpacing(0)
         
         # Title label
-        title_label = QLabel("📂 Document Security - Login")
+        title_label = QLabel("Document Security - Login")
         title_label.setStyleSheet("""
             QLabel {
                 color: white;
@@ -67,14 +90,13 @@ class LoginWindow(QDialog):
                 max-width: 35px;
                 min-height: 25px;
                 max-height: 25px;
+                border-radius: 0px;
             }
             QPushButton:hover {
                 background-color: rgba(255, 255, 255, 0.1);
             }
         """
         
-        minimize_button_style = button_style
-        maximize_button_style = button_style
         close_button_style = """
             QPushButton {
                 background-color: transparent;
@@ -87,6 +109,7 @@ class LoginWindow(QDialog):
                 max-width: 35px;
                 min-height: 25px;
                 max-height: 25px;
+                border-radius: 0px;
             }
             QPushButton:hover {
                 background-color: #e74c3c;
@@ -95,17 +118,10 @@ class LoginWindow(QDialog):
         
         # Minimize button
         self.minimize_btn = QPushButton("−")
-        self.minimize_btn.setStyleSheet(minimize_button_style)
+        self.minimize_btn.setStyleSheet(button_style)
         self.minimize_btn.clicked.connect(self.showMinimized)
         self.minimize_btn.setToolTip("Minimize")
         title_bar_layout.addWidget(self.minimize_btn)
-        
-        # Maximize/Restore button
-        self.maximize_btn = QPushButton("□")
-        self.maximize_btn.setStyleSheet(maximize_button_style)
-        self.maximize_btn.clicked.connect(self.toggle_maximize)
-        self.maximize_btn.setToolTip("Maximize")
-        title_bar_layout.addWidget(self.maximize_btn)
         
         # Close button
         self.close_btn = QPushButton("✕")
@@ -131,19 +147,19 @@ class LoginWindow(QDialog):
         
         # Login card
         card = QFrame()
-        card.setFixedSize(360, 420)
+        card.setFixedSize(380, 440)
         card.setStyleSheet("""
             QFrame {
                 background-color: white;
-                border-radius: 20px;
-                border: 1px solid #e0e4e7;
+                border-radius: 16px;
+                border: 1px solid #e5e7eb;
             }
         """)
         
         # Card layout
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(40, 30, 40, 30)
-        card_layout.setSpacing(15)
+        card_layout.setContentsMargins(40, 30, 40, 25)
+        card_layout.setSpacing(12)
         
         # Welcome title
         welcome_label = QLabel("Welcome")
@@ -151,8 +167,8 @@ class LoginWindow(QDialog):
             QLabel {
                 font-size: 28px;
                 font-weight: bold;
-                color: #2c3e50;
-                margin-bottom: 8px;
+                color: #1f2937;
+                margin-bottom: 4px;
                 border: none;
             }
         """)
@@ -165,66 +181,62 @@ class LoginWindow(QDialog):
             QLabel {
                 border: none;
                 font-size: 14px;
-                color: #7f8c8d;
-                margin-bottom: 10px;
+                color: #6b7280;
+                margin-bottom: 8px;
             }
         """)
         subtitle_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         card_layout.addWidget(subtitle_label)
-        
-        # Email/Username input
-        self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("Enter your username")
-        self.username_input.setStyleSheet("""
+
+        # Shared input style
+        input_style = """
             QLineEdit {
-                padding: 18px 25px 18px 10px;
-                border: 2px solid #27ae60;
-                border-radius: 30px;
+                padding: 14px 20px 14px 10px;
+                border: 2px solid #d1d5db;
+                border-radius: 10px;
                 font-size: 14px;
                 background-color: white;
-                color: #2c3e50;
+                color: #1f2937;
                 min-height: 20px;
             }
             QLineEdit:focus {
                 border-color: #27ae60;
                 outline: none;
             }
-        """)
-        # add user icon on the left
+        """
+        
+        # Email/Username input
+        self.username_input = QLineEdit()
+        self.username_input.setPlaceholderText("Enter your username")
+        self.username_input.setStyleSheet(input_style)
         self.username_input.addAction(QIcon('assets/icons/user.png'), QLineEdit.ActionPosition.LeadingPosition)
-        # Bind Enter key to login
         self.username_input.returnPressed.connect(self.login)
         card_layout.addWidget(self.username_input)
-        # space between email and password
-        card_layout.addSpacing(12)
+        card_layout.addSpacing(8)
 
         # Password input
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.password_input.setPlaceholderText("Password")
-        self.password_input.setStyleSheet("""
-            QLineEdit {
-                padding: 18px 25px 18px 10px;
-                border: 2px solid #bdc3c7;
-                border-radius: 30px;
-                font-size: 14px;
-                background-color: white;
-                color: #2c3e50;
-                min-height: 20px;
-            }
-            QLineEdit:focus {
-                border-color: #27ae60;
-                outline: none;
-            }
-        """)
-        # add lock icon on the left
+        self.password_input.setStyleSheet(input_style)
         self.password_input.addAction(QIcon('assets/icons/lock.png'), QLineEdit.ActionPosition.LeadingPosition)
-        # Bind Enter key to login
         self.password_input.returnPressed.connect(self.login)
         card_layout.addWidget(self.password_input)
 
-        # Add some spacing before button
-        card_layout.addSpacing(25)
+        # Status label for loading state
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("""
+            QLabel {
+                color: #6b7280;
+                font-size: 13px;
+                border: none;
+            }
+        """)
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.status_label.setVisible(False)
+        card_layout.addWidget(self.status_label)
+
+        card_layout.addSpacing(16)
         
         # Login button
         self.login_button = QPushButton("Log In")
@@ -232,9 +244,9 @@ class LoginWindow(QDialog):
             QPushButton {
                 background-color: #27ae60;
                 color: white;
-                border: 2px solid #bdc3c7;
-                border-radius: 30px;
-                padding: 18px 25px;
+                border: none;
+                border-radius: 10px;
+                padding: 14px 25px;
                 font-size: 16px;
                 font-weight: bold;
                 min-height: 20px;
@@ -245,18 +257,21 @@ class LoginWindow(QDialog):
             QPushButton:pressed {
                 background-color: #1e8449;
             }
+            QPushButton:disabled {
+                background-color: #d1d5db;
+                color: #9ca3af;
+            }
         """)
         self.login_button.clicked.connect(self.login)
         card_layout.addWidget(self.login_button)
         
-        # Add some spacing at bottom
-        card_layout.addSpacing(30)
+        card_layout.addSpacing(20)
         
         # Info text for account creation
         info_label = QLabel("Contact your administrator to create an account")
         info_label.setStyleSheet("""
             QLabel {
-                color: #95a5a6;
+                color: #9ca3af;
                 font-size: 12px;
                 border: none;
             }
@@ -280,32 +295,48 @@ class LoginWindow(QDialog):
             QMessageBox.warning(self, "Error", "Please enter both username and password.")
             return
 
-        if self.api_client.login(username, password):
-            print("Login successful, redirecting to dashboard")
-            self.login_successful.emit()
-            self.accept()
-        else:
-            QMessageBox.warning(self, "Login Failed", "Invalid credentials. Please try again.")
+        # Show loading state
+        self.login_button.setEnabled(False)
+        self.login_button.setText("Signing in...")
+        self.username_input.setEnabled(False)
+        self.password_input.setEnabled(False)
+        self.status_label.setText("Connecting to server...")
+        self.status_label.setVisible(True)
+
+        # Run login in background thread
+        self._login_worker = LoginWorker(self.api_client, username, password)
+        self._login_worker.success.connect(self._on_login_success)
+        self._login_worker.failed.connect(self._on_login_failed)
+        self._login_worker.start()
+
+    @pyqtSlot()
+    def _on_login_success(self):
+        """Handle successful login from worker thread."""
+        self._reset_login_ui()
+        self.login_successful.emit()
+        self.accept()
+
+    @pyqtSlot(str)
+    def _on_login_failed(self, message: str):
+        """Handle failed login from worker thread."""
+        self._reset_login_ui()
+        QMessageBox.warning(self, "Login Failed", message)
+
+    def _reset_login_ui(self):
+        """Reset login form to idle state."""
+        self.login_button.setEnabled(True)
+        self.login_button.setText("Log In")
+        self.username_input.setEnabled(True)
+        self.password_input.setEnabled(True)
+        self.status_label.setVisible(False)
 
     def close_window(self):
         self.close()
-
-    def toggle_maximize(self):
-        """Toggle between maximized and normal window state."""
-        if self.isMaximized():
-            self.showNormal()
-            self.maximize_btn.setText("□")
-            self.maximize_btn.setToolTip("Maximize")
-        else:
-            self.showMaximized()
-            self.maximize_btn.setText("❐")
-            self.maximize_btn.setToolTip("Restore")
     
     def mousePressEvent(self, event):
         """Handle mouse press for window dragging."""
         if event.button() == Qt.MouseButton.LeftButton:
-            # Only allow dragging from the top area (title bar region)
-            if event.position().y() < 35:  # Title bar height
+            if event.position().y() < 35:
                 self.dragging = True
                 self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
                 event.accept()

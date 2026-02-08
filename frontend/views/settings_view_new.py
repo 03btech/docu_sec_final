@@ -32,7 +32,7 @@ class SettingsView(QWidget):
         title.setStyleSheet("""
             font-size: 28px;
             font-weight: bold;
-            color: #2c3e50;
+            color: #1f2937;
         """)
         header_layout.addWidget(title)
         header_layout.addStretch()
@@ -51,7 +51,7 @@ class SettingsView(QWidget):
         # Separator
         separator = QFrame()
         separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("background-color: #bdc3c7;")
+        separator.setStyleSheet("background-color: #d1d5db;")
         main_layout.addWidget(separator)
         
         # Scroll area for settings
@@ -69,7 +69,7 @@ class SettingsView(QWidget):
             QGroupBox {
                 font-size: 16px;
                 font-weight: bold;
-                color: #2c3e50;
+                color: #1f2937;
                 border: 2px solid #e0e4e7;
                 border-radius: 10px;
                 margin-top: 10px;
@@ -88,11 +88,11 @@ class SettingsView(QWidget):
         input_style = """
             QLineEdit, QComboBox {
                 padding: 12px 20px;
-                border: 2px solid #bdc3c7;
+                border: 2px solid #d1d5db;
                 border-radius: 8px;
                 font-size: 14px;
                 background-color: white;
-                color: #2c3e50;
+                color: #1f2937;
                 min-height: 20px;
             }
             QLineEdit:focus, QComboBox:focus {
@@ -181,7 +181,7 @@ class SettingsView(QWidget):
             QGroupBox {
                 font-size: 16px;
                 font-weight: bold;
-                color: #2c3e50;
+                color: #1f2937;
                 border: 2px solid #e0e4e7;
                 border-radius: 10px;
                 margin-top: 10px;
@@ -270,7 +270,7 @@ class SettingsView(QWidget):
             QGroupBox {
                 font-size: 16px;
                 font-weight: bold;
-                color: #2c3e50;
+                color: #1f2937;
                 border: 2px solid #e0e4e7;
                 border-radius: 10px;
                 margin-top: 10px;
@@ -289,11 +289,11 @@ class SettingsView(QWidget):
         input_style = """
             QLineEdit {
                 padding: 12px 20px;
-                border: 2px solid #bdc3c7;
+                border: 2px solid #d1d5db;
                 border-radius: 8px;
                 font-size: 14px;
                 background-color: white;
-                color: #2c3e50;
+                color: #1f2937;
                 min-height: 20px;
             }
             QLineEdit:focus {
