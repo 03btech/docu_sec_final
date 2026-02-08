@@ -1,22 +1,25 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-                              QPushButton, QFileDialog, QMessageBox, QProgressBar)
+                              QPushButton, QFileDialog, QMessageBox, QProgressBar,
+                              QFrame, QScrollArea)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent
+import qtawesome as qta
 from api.client import APIClient
 import os
 
-# Stage definitions: (status_key, progress_percent, display_label)
+# Stage definitions: (status_key, progress_percent, display_label, icon)
 CLASSIFICATION_STAGES = [
-    ("queued",           10,  "Queued..."),
-    ("extracting_text",  40,  "Extracting text..."),
-    ("classifying",      75,  "Classifying with AI..."),
-    ("completed",        100, "Classification complete"),
-    ("failed",           100, "Classification failed"),
+    ("queued",           10,  "Queued for processing",       "fa5s.clock"),
+    ("extracting_text",  40,  "Extracting text content...",  "fa5s.file-alt"),
+    ("classifying",      75,  "Classifying with AI...",      "fa5s.brain"),
+    ("completed",        100, "Classification complete",     "fa5s.check-circle"),
+    ("failed",           100, "Classification failed",       "fa5s.times-circle"),
 ]
-STAGE_MAP = {s[0]: (s[1], s[2]) for s in CLASSIFICATION_STAGES}
+STAGE_MAP = {s[0]: (s[1], s[2], s[3]) for s in CLASSIFICATION_STAGES}
 
 
 class UploadWorker(QThread):
-    """Worker thread for file upload (save + create record only, returns immediately)."""
+    """Worker thread for file upload."""
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
 
@@ -37,12 +40,8 @@ class UploadWorker(QThread):
 
 
 class PollWorker(QThread):
-    """Worker thread for polling classification status.
-
-    Runs the blocking HTTP request off the main thread to prevent
-    UI freezes during network latency, rate-limit delays, or timeouts.
-    Emits result signal with status data (or None on failure)."""
-    result = pyqtSignal(object)  # dict or None
+    """Worker thread for polling classification status."""
+    result = pyqtSignal(object)
 
     def __init__(self, api_client, doc_id):
         super().__init__()
@@ -54,8 +53,52 @@ class PollWorker(QThread):
         self.result.emit(status_data)
 
 
+class DropZone(QFrame):
+    """Drag-and-drop zone for file selection."""
+    file_dropped = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self._hovered = False
+        self._apply_style()
+
+    def _apply_style(self):
+        border_color = "#27ae60" if self._hovered else "#d1d5db"
+        bg = "#f0fdf4" if self._hovered else "#f9fafb"
+        self.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg};
+                border: 2px dashed {border_color};
+                border-radius: 12px;
+            }}
+        """)
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        if event.mimeData().hasUrls():
+            self._hovered = True
+            self._apply_style()
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self._hovered = False
+        self._apply_style()
+
+    def dropEvent(self, event: QDropEvent):
+        self._hovered = False
+        self._apply_style()
+        urls = event.mimeData().urls()
+        if urls:
+            path = urls[0].toLocalFile()
+            ext = os.path.splitext(path)[1].lower()
+            if ext in ('.pdf', '.docx', '.txt'):
+                self.file_dropped.emit(path)
+            else:
+                QMessageBox.warning(self, "Unsupported File",
+                                    f"'{ext}' is not supported.\nUse PDF, DOCX, or TXT.")
+
+
 class UploadDocumentView(QWidget):
-    # Maximum polling duration: 5 minutes at 1s intervals
     MAX_POLL_COUNT = 300
 
     def __init__(self, api_client: APIClient):
@@ -65,93 +108,254 @@ class UploadDocumentView(QWidget):
         self.poll_timer = None
         self.current_doc_id = None
         self.poll_count = 0
-        self._poll_in_flight = False   # overlap guard for PollWorker
+        self._poll_in_flight = False
         self._poll_worker = None
         self.setup_ui()
 
     def setup_ui(self):
-        layout = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
-        # Title
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(20)
+
+        # Page title
         title = QLabel("Upload Document")
-        title.setStyleSheet("font-size: 24px; font-weight: bold; margin-bottom: 20px;")
+        title.setStyleSheet("font-size: 28px; font-weight: bold; color: #1f2937;")
         layout.addWidget(title)
 
-        # Description
-        description = QLabel("Select a document to upload. The system will automatically "
-                             "classify it and store it securely.")
-        description.setStyleSheet("font-size: 14px; color: #6f7172; margin-bottom: 30px;")
+        description = QLabel("Upload a document and the system will automatically classify "
+                             "it using AI and store it securely.")
+        description.setStyleSheet("font-size: 14px; color: #6b7280; margin-bottom: 4px;")
         description.setWordWrap(True)
         layout.addWidget(description)
 
-        # File Selection Section
-        file_section = QWidget()
-        file_layout = QVBoxLayout(file_section)
+        # ── Drop Zone Card ──
+        drop_card = QFrame()
+        drop_card.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+            }
+        """)
+        drop_card_layout = QVBoxLayout(drop_card)
+        drop_card_layout.setContentsMargins(20, 20, 20, 20)
+        drop_card_layout.setSpacing(16)
 
-        select_file_layout = QHBoxLayout()
-        self.file_label = QLabel("No file selected")
-        self.file_label.setStyleSheet(
-            "font-size: 14px; padding: 8px; border: 1px solid #cccccc; "
-            "border-radius: 5px; background-color: #f9f9f9;"
-        )
-        self.file_label.setMinimumHeight(40)
+        card_title = QLabel("Select File")
+        card_title.setStyleSheet("font-size: 16px; font-weight: 600; color: #1f2937; border: none;")
+        drop_card_layout.addWidget(card_title)
 
-        select_file_button = QPushButton("Select File")
-        select_file_button.clicked.connect(self.select_file)
+        # Drop zone
+        self.drop_zone = DropZone()
+        self.drop_zone.setFixedHeight(180)
+        self.drop_zone.file_dropped.connect(self._on_file_selected)
+        dz_layout = QVBoxLayout(self.drop_zone)
+        dz_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dz_layout.setSpacing(10)
 
-        select_file_layout.addWidget(self.file_label)
-        select_file_layout.addWidget(select_file_button)
-        file_layout.addLayout(select_file_layout)
+        icon_label = QLabel()
+        icon_label.setPixmap(qta.icon('fa5s.cloud-upload-alt', color='#9ca3af').pixmap(48, 48))
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("border: none;")
+        dz_layout.addWidget(icon_label)
 
-        file_hint = QLabel("Supported formats: PDF, DOCX, TXT")
-        file_hint.setStyleSheet("font-size: 12px; color: #6f7172; margin-top: 5px;")
-        file_layout.addWidget(file_hint)
-        layout.addWidget(file_section)
+        dz_text = QLabel("Drag & drop your file here")
+        dz_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dz_text.setStyleSheet("font-size: 15px; font-weight: 500; color: #374151; border: none;")
+        dz_layout.addWidget(dz_text)
 
-        # Upload Section
-        upload_section = QWidget()
-        upload_layout = QVBoxLayout(upload_section)
+        dz_sub = QLabel("or click the button below to browse")
+        dz_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dz_sub.setStyleSheet("font-size: 13px; color: #9ca3af; border: none;")
+        dz_layout.addWidget(dz_sub)
 
-        # Determinate progress bar (hidden initially)
+        drop_card_layout.addWidget(self.drop_zone)
+
+        # Browse button row
+        browse_row = QHBoxLayout()
+        browse_row.setSpacing(12)
+
+        self.browse_btn = QPushButton("  Browse Files")
+        self.browse_btn.setIcon(qta.icon('fa5s.folder-open', color='white'))
+        self.browse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.browse_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60; color: white; border: none;
+                border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 600;
+            }
+            QPushButton:hover { background-color: #229954; }
+        """)
+        self.browse_btn.clicked.connect(self.select_file)
+        browse_row.addWidget(self.browse_btn)
+
+        format_label = QLabel("Supported: PDF, DOCX, TXT")
+        format_label.setStyleSheet("font-size: 12px; color: #9ca3af; border: none;")
+        browse_row.addWidget(format_label)
+        browse_row.addStretch()
+
+        drop_card_layout.addLayout(browse_row)
+
+        # Selected file info (hidden initially)
+        self.file_info_frame = QFrame()
+        self.file_info_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f0fdf4;
+                border: 1px solid #bbf7d0;
+                border-radius: 8px;
+            }
+        """)
+        self.file_info_frame.setVisible(False)
+        fi_layout = QHBoxLayout(self.file_info_frame)
+        fi_layout.setContentsMargins(12, 10, 12, 10)
+
+        fi_icon = QLabel()
+        fi_icon.setPixmap(qta.icon('fa5s.file-alt', color='#27ae60').pixmap(20, 20))
+        fi_icon.setStyleSheet("border: none;")
+        fi_layout.addWidget(fi_icon)
+
+        self.file_name_label = QLabel("")
+        self.file_name_label.setStyleSheet("font-size: 13px; font-weight: 500; color: #166534; border: none;")
+        fi_layout.addWidget(self.file_name_label)
+
+        self.file_size_label = QLabel("")
+        self.file_size_label.setStyleSheet("font-size: 12px; color: #6b7280; border: none;")
+        fi_layout.addWidget(self.file_size_label)
+        fi_layout.addStretch()
+
+        clear_btn = QPushButton("✕")
+        clear_btn.setFixedSize(24, 24)
+        clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_btn.setStyleSheet("""
+            QPushButton { background: transparent; border: none; color: #6b7280; font-size: 14px; border-radius: 12px; }
+            QPushButton:hover { background-color: #dcfce7; color: #166534; }
+        """)
+        clear_btn.clicked.connect(self._clear_file)
+        fi_layout.addWidget(clear_btn)
+
+        drop_card_layout.addWidget(self.file_info_frame)
+        layout.addWidget(drop_card)
+
+        # ── Progress Card (hidden initially) ──
+        self.progress_card = QFrame()
+        self.progress_card.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+            }
+        """)
+        self.progress_card.setVisible(False)
+        pc_layout = QVBoxLayout(self.progress_card)
+        pc_layout.setContentsMargins(20, 20, 20, 20)
+        pc_layout.setSpacing(12)
+
+        pc_title = QLabel("Processing Document")
+        pc_title.setStyleSheet("font-size: 16px; font-weight: 600; color: #1f2937; border: none;")
+        pc_layout.addWidget(pc_title)
+
         self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
-        self.progress_bar.setRange(0, 100)          # Determinate: 0-100%
+        self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
-        self.progress_bar.setTextVisible(True)
-        upload_layout.addWidget(self.progress_bar)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                background-color: #e5e7eb;
+                border: none;
+                border-radius: 4px;
+            }
+            QProgressBar::chunk {
+                background-color: #27ae60;
+                border-radius: 4px;
+            }
+        """)
+        pc_layout.addWidget(self.progress_bar)
 
-        # Stage label (hidden initially)
+        stage_row = QHBoxLayout()
+        self.stage_icon = QLabel()
+        self.stage_icon.setStyleSheet("border: none;")
+        self.stage_icon.setFixedSize(20, 20)
+        stage_row.addWidget(self.stage_icon)
         self.stage_label = QLabel("")
-        self.stage_label.setStyleSheet("font-size: 12px; color: #4a90d9; margin-top: 4px;")
-        self.stage_label.setVisible(False)
-        upload_layout.addWidget(self.stage_label)
+        self.stage_label.setStyleSheet("font-size: 13px; color: #6b7280; border: none;")
+        stage_row.addWidget(self.stage_label)
+        stage_row.addStretch()
+        self.progress_pct = QLabel("0%")
+        self.progress_pct.setStyleSheet("font-size: 13px; font-weight: 600; color: #27ae60; border: none;")
+        stage_row.addWidget(self.progress_pct)
+        pc_layout.addLayout(stage_row)
 
-        # Upload button
-        self.upload_button = QPushButton("Upload Document")
-        self.upload_button.clicked.connect(self.upload_file)
+        layout.addWidget(self.progress_card)
+
+        # ── Upload Button ──
+        self.upload_button = QPushButton("  Upload & Classify")
+        self.upload_button.setIcon(qta.icon('fa5s.cloud-upload-alt', color='white'))
+        self.upload_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.upload_button.setEnabled(False)
-        upload_layout.addWidget(self.upload_button)
+        self.upload_button.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60; color: white; border: none;
+                border-radius: 10px; padding: 14px 28px; font-size: 16px; font-weight: bold;
+            }
+            QPushButton:hover { background-color: #229954; }
+            QPushButton:pressed { background-color: #1e8449; }
+            QPushButton:disabled { background-color: #d1d5db; color: #9ca3af; }
+        """)
+        self.upload_button.clicked.connect(self.upload_file)
+        layout.addWidget(self.upload_button)
 
-        layout.addWidget(upload_section)
         layout.addStretch()
+        scroll.setWidget(container)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(scroll)
+
+    # ── File Selection ──
 
     def select_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
+        path, _ = QFileDialog.getOpenFileName(
             self, "Select Document to Upload", "",
             "Supported Documents (*.pdf *.docx *.txt);;PDF Files (*.pdf);;Word Documents (*.docx);;Text Files (*.txt)"
         )
-        if file_path:
-            self.selected_file_path = file_path
-            self.file_label.setText(os.path.basename(file_path))
-            self.upload_button.setEnabled(True)
+        if path:
+            self._on_file_selected(path)
+
+    def _on_file_selected(self, path: str):
+        self.selected_file_path = path
+        name = os.path.basename(path)
+        size = os.path.getsize(path)
+        self.file_name_label.setText(name)
+        self.file_size_label.setText(self._format_size(size))
+        self.file_info_frame.setVisible(True)
+        self.upload_button.setEnabled(True)
+
+    def _clear_file(self):
+        self.selected_file_path = None
+        self.file_info_frame.setVisible(False)
+        self.upload_button.setEnabled(False)
+
+    @staticmethod
+    def _format_size(size_bytes: int) -> str:
+        if size_bytes < 1024:
+            return f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            return f"{size_bytes / 1024:.1f} KB"
+        else:
+            return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+    # ── Upload ──
 
     def upload_file(self):
         if not self.selected_file_path:
             QMessageBox.warning(self, "No File Selected", "Please select a file first.")
             return
 
-        # P0-REVIEW-4: Stop any existing poll timer and worker BEFORE starting
-        # a new upload. Prevents stale PollWorker from corrupting progress display.
         if self.poll_timer and self.poll_timer.isActive():
             self.poll_timer.stop()
         if self._poll_worker is not None:
@@ -163,33 +367,32 @@ class UploadDocumentView(QWidget):
         self._poll_in_flight = False
         self.current_doc_id = None
 
-        # Show progress UI
         self.upload_button.setEnabled(False)
-        self.progress_bar.setVisible(True)
-        self.progress_bar.setValue(5)
-        self.stage_label.setVisible(True)
-        self.stage_label.setText("Uploading file...")
+        self.browse_btn.setEnabled(False)
+        self.progress_card.setVisible(True)
+        self._set_stage("fa5s.cloud-upload-alt", "Uploading file...", 5)
 
-        # Start upload in background thread
         self.upload_worker = UploadWorker(self.api_client, self.selected_file_path)
         self.upload_worker.finished.connect(self.on_upload_finished)
         self.upload_worker.error.connect(self.on_upload_error)
         self.upload_worker.start()
 
-    def on_upload_finished(self, result):
-        """File saved on server — now poll for classification progress."""
-        self.current_doc_id = result.get("id")
-        self.progress_bar.setValue(10)
-        self.stage_label.setText("Queued for classification...")
+    def _set_stage(self, icon_name: str, text: str, pct: int):
+        self.stage_icon.setPixmap(qta.icon(icon_name, color='#27ae60').pixmap(18, 18))
+        self.stage_label.setText(text)
+        self.progress_bar.setValue(pct)
+        self.progress_pct.setText(f"{pct}%")
 
-        # Start polling every 1 second (with timeout safety)
+    def on_upload_finished(self, result):
+        self.current_doc_id = result.get("id")
+        self._set_stage("fa5s.clock", "Queued for classification...", 10)
+
         self.poll_count = 0
         self.poll_timer = QTimer()
         self.poll_timer.timeout.connect(self.poll_classification_status)
         self.poll_timer.start(1000)
 
     def poll_classification_status(self):
-        """Kick off a PollWorker thread to check status without blocking the UI."""
         self.poll_count += 1
         if self.poll_count > self.MAX_POLL_COUNT:
             self.poll_timer.stop()
@@ -200,12 +403,10 @@ class UploadDocumentView(QWidget):
             )
             return
 
-        # Prevent overlapping poll requests
         if self._poll_in_flight:
             return
         self._poll_in_flight = True
 
-        # Clean up previous PollWorker to prevent QThread accumulation
         if self._poll_worker is not None:
             self._poll_worker.deleteLater()
 
@@ -214,26 +415,21 @@ class UploadDocumentView(QWidget):
         self._poll_worker.start()
 
     def _handle_poll_result(self, status_data):
-        """Handle the result from PollWorker (runs on main thread via signal)."""
-        self._poll_in_flight = False   # allow next poll tick
+        self._poll_in_flight = False
         if not status_data:
-            return  # Network hiccup, try again next tick
+            return
 
         status = status_data.get("status", "queued")
 
-        # Handle rate limiting — back off the poll interval temporarily
         if status == "rate_limited":
-            self.poll_timer.setInterval(3000)  # Slow down to 3s
+            self.poll_timer.setInterval(3000)
             return
 
-        # Restore normal interval if we were backed off
         if self.poll_timer.interval() != 1000:
             self.poll_timer.setInterval(1000)
 
-        progress, label = STAGE_MAP.get(status, (10, "Processing..."))
-
-        self.progress_bar.setValue(progress)
-        self.stage_label.setText(label)
+        progress, label, icon = STAGE_MAP.get(status, (10, "Processing...", "fa5s.spinner"))
+        self._set_stage(icon, label, progress)
 
         if status == "completed":
             self.poll_timer.stop()
@@ -247,13 +443,22 @@ class UploadDocumentView(QWidget):
             self.on_upload_error(f"Classification failed: {error_msg}")
 
     def _show_success(self, result):
-        """Show success dialog and reset UI."""
-        self.progress_bar.setVisible(False)
-        self.stage_label.setVisible(False)
+        self.progress_card.setVisible(False)
         self.upload_button.setEnabled(True)
+        self.browse_btn.setEnabled(True)
 
         filename = result.get("filename", "Document")
         classification = result.get("classification", "unclassified")
+
+        # Show inline success
+        self._set_stage("fa5s.check-circle", "Classification complete", 100)
+        self.progress_card.setVisible(True)
+        self.stage_label.setStyleSheet("font-size: 13px; color: #166534; font-weight: 600; border: none;")
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { background-color: #e5e7eb; border: none; border-radius: 4px; }
+            QProgressBar::chunk { background-color: #22c55e; border-radius: 4px; }
+        """)
+
         QMessageBox.information(
             self, "Upload Successful",
             f"Document '{filename}' has been uploaded successfully!\n\n"
@@ -261,20 +466,23 @@ class UploadDocumentView(QWidget):
             f"The document is now available in your 'My Documents' section."
         )
 
-        self.selected_file_path = None
+        # Reset
+        self._clear_file()
         self.current_doc_id = None
-        self.file_label.setText("No file selected")
-        self.upload_button.setEnabled(False)
+        self.progress_card.setVisible(False)
+        self.stage_label.setStyleSheet("font-size: 13px; color: #6b7280; border: none;")
+        self.progress_bar.setStyleSheet("""
+            QProgressBar { background-color: #e5e7eb; border: none; border-radius: 4px; }
+            QProgressBar::chunk { background-color: #27ae60; border-radius: 4px; }
+        """)
 
     def on_upload_error(self, error_message):
-        """Show error and reset UI. Offers retry if classification failed but doc was saved."""
         if self.poll_timer:
             self.poll_timer.stop()
-        self.progress_bar.setVisible(False)
-        self.stage_label.setVisible(False)
+        self.progress_card.setVisible(False)
         self.upload_button.setEnabled(True)
+        self.browse_btn.setEnabled(True)
 
-        # Offer retry for classification failures (document is already saved)
         if self.current_doc_id:
             retry = QMessageBox.question(
                 self, "Retry Classification?",
@@ -285,14 +493,12 @@ class UploadDocumentView(QWidget):
             if retry == QMessageBox.StandardButton.Yes:
                 try:
                     self.api_client.retry_classification(self.current_doc_id)
-                    # Restart polling
                     self.poll_count = 0
                     self._poll_in_flight = False
-                    self.progress_bar.setVisible(True)
-                    self.progress_bar.setValue(10)
-                    self.stage_label.setVisible(True)
-                    self.stage_label.setText("Retrying classification...")
+                    self.progress_card.setVisible(True)
+                    self._set_stage("fa5s.redo", "Retrying classification...", 10)
                     self.upload_button.setEnabled(False)
+                    self.browse_btn.setEnabled(False)
                     self.poll_timer = QTimer()
                     self.poll_timer.timeout.connect(self.poll_classification_status)
                     self.poll_timer.start(1000)
@@ -300,12 +506,14 @@ class UploadDocumentView(QWidget):
                 except Exception:
                     QMessageBox.critical(self, "Retry Failed", "Could not retry classification.")
 
-        # Clear doc ID after retry check (not before)
         self.current_doc_id = None
         QMessageBox.critical(self, "Upload Failed", error_message)
 
+    def refresh_data(self):
+        """No-op — nothing to refresh, but keeps interface consistent."""
+        pass
+
     def closeEvent(self, event):
-        """P3-16 / P2-14: Clean up QTimer and PollWorker on widget close."""
         if self.poll_timer and self.poll_timer.isActive():
             self.poll_timer.stop()
         if self._poll_worker is not None:

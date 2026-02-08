@@ -13,6 +13,7 @@ class SignupWindow(QDialog):
         self.setWindowTitle("Create Account")
         self.setFixedSize(480, 820)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.departments = []
         self.dragging = False
         self.drag_position = QPoint()

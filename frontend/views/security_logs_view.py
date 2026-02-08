@@ -1,336 +1,436 @@
 """
-Security Logs View - Display security event logs
+Security Logs View — Modern card-based layout with dynamic filters and event badges.
 """
-from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QTableWidgetItem, QLabel, QPushButton, QHeaderView,
-                             QMessageBox, QComboBox, QLineEdit, QTextEdit)
-from PyQt6.QtCore import Qt, QTimer
+                             QMessageBox, QComboBox, QLineEdit, QFrame, QScrollArea,
+                             QTextEdit)
+from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QColor
+import qtawesome as qta
 from api.client import APIClient
 from datetime import datetime
 import json
+
+# ── Activity type display mapping ──
+_ACTIVITY_STYLE: dict[str, tuple[str, str, str, str]] = {
+    # activity_type → (icon, text_color, bg_color, display_label)
+    "phone_detected":                   ("fa5s.mobile-alt",     "#dc2626", "#fee2e2", "Phone Detected"),
+    "no_person_detected":               ("fa5s.user-slash",     "#d97706", "#fef3c7", "No Person"),
+    "low_lighting_detected":            ("fa5s.adjust",         "#92400e", "#fef3c7", "Low Lighting"),
+    "viewer_closed_low_lighting":       ("fa5s.door-open",      "#9f1239", "#ffe4e6", "Closed — Low Light"),
+    "viewer_closed_phone_detection":    ("fa5s.door-open",      "#dc2626", "#fee2e2", "Closed — Phone"),
+    "screen_capture_protection_enabled":("fa5s.shield-alt",     "#16a34a", "#dcfce7", "Screen Protection"),
+}
+
+def _display_label(activity_type: str) -> str:
+    style = _ACTIVITY_STYLE.get(activity_type)
+    if style:
+        return style[3]
+    return activity_type.replace('_', ' ').title()
 
 
 class SecurityLogsView(QWidget):
     def __init__(self, api_client: APIClient):
         super().__init__()
         self.api_client = api_client
-        self.logs = []
+        self.logs: list[dict] = []
+        self.filtered_logs: list[dict] = []
         self.setup_ui()
 
     def setup_ui(self):
-        layout = QVBoxLayout(self)
-        
-        # Title
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        # Header
         title = QLabel("Security Logs")
-        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #1f2937; margin: 10px;")
+        title.setStyleSheet("font-size: 28px; font-weight: bold; color: #1f2937;")
         layout.addWidget(title)
-        
-        # Description
-        description = QLabel("View security events and threat detections")
-        description.setStyleSheet("font-size: 14px; color: #7f8c8d; margin-bottom: 20px;")
-        layout.addWidget(description)
-        
-        # Filters
-        filter_layout = QHBoxLayout()
-        
-        # Activity type filter
-        filter_layout.addWidget(QLabel("Activity Type:"))
+
+        desc = QLabel("Monitor security events: phone detection, person absence, and lighting alerts")
+        desc.setStyleSheet("font-size: 14px; color: #6b7280; margin-bottom: 4px;")
+        layout.addWidget(desc)
+
+        # ── Filters Card ──
+        filter_card = QFrame()
+        filter_card.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+            }
+        """)
+        fc_layout = QHBoxLayout(filter_card)
+        fc_layout.setContentsMargins(16, 12, 16, 12)
+        fc_layout.setSpacing(12)
+
+        # Event type filter
+        type_label = QLabel("Event:")
+        type_label.setStyleSheet("font-size: 13px; font-weight: 500; color: #374151; border: none;")
+        fc_layout.addWidget(type_label)
         self.activity_filter = QComboBox()
         self.activity_filter.addItem("All", "all")
-        # Populated dynamically after data loads
+        self.activity_filter.setMinimumWidth(180)
+        self.activity_filter.setStyleSheet(self._combo_style())
         self.activity_filter.currentIndexChanged.connect(self.apply_filters)
-        filter_layout.addWidget(self.activity_filter)
-        
-        # Search filter
-        filter_layout.addWidget(QLabel("Search:"))
+        fc_layout.addWidget(self.activity_filter)
+
+        # Search
+        search_label = QLabel("Search:")
+        search_label.setStyleSheet("font-size: 13px; font-weight: 500; color: #374151; border: none;")
+        fc_layout.addWidget(search_label)
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search by user or activity...")
-        self.search_input.textChanged.connect(self.apply_filters)
-        filter_layout.addWidget(self.search_input)
-        
-        # Refresh button
-        refresh_button = QPushButton("Refresh")
-        refresh_button.clicked.connect(self.refresh_data)
-        refresh_button.setStyleSheet("""
-            QPushButton {
-                background-color: #e74c3c;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 8px 16px;
-                font-size: 14px;
+        self.search_input.setPlaceholderText("User name...")
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 8px;
+                font-size: 13px; background: white;
             }
-            QPushButton:hover {
-                background-color: #c0392b;
+            QLineEdit:focus { border-color: #3b82f6; }
+        """)
+        self.search_input.textChanged.connect(self.apply_filters)
+        fc_layout.addWidget(self.search_input, stretch=1)
+
+        # Refresh
+        refresh_btn = QPushButton("  Refresh")
+        refresh_btn.setIcon(qta.icon('fa5s.sync-alt', color='white'))
+        refresh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #3b82f6; color: white; border: none;
+                border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 500;
+            }
+            QPushButton:hover { background-color: #2563eb; }
+        """)
+        refresh_btn.clicked.connect(self.refresh_data)
+        fc_layout.addWidget(refresh_btn)
+
+        layout.addWidget(filter_card)
+
+        # ── Table Card ──
+        table_card = QFrame()
+        table_card.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
             }
         """)
-        filter_layout.addWidget(refresh_button)
-        
-        filter_layout.addStretch()
-        layout.addLayout(filter_layout)
-        
-        # Table
+        tc_layout = QVBoxLayout(table_card)
+        tc_layout.setContentsMargins(0, 0, 0, 0)
+
         self.table = QTableWidget()
         self.table.setColumnCount(4)
-        self.table.setHorizontalHeaderLabels([
-            "User", "Activity Type", "Timestamp", "Details"
-        ])
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.setHorizontalHeaderLabels(["User", "Event", "Details", "Timestamp"])
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        self.table.setAlternatingRowColors(True)
-        self.table.itemSelectionChanged.connect(self.show_log_details)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setShowGrid(False)
+        self.table.setAlternatingRowColors(False)
+
+        vh = self.table.verticalHeader()
+        if vh:
+            vh.setVisible(False)
+            vh.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+            vh.setDefaultSectionSize(48)
+
+        hh = self.table.horizontalHeader()
+        if hh:
+            hh.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+            self.table.setColumnWidth(0, 180)
+            hh.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+            self.table.setColumnWidth(1, 190)
+            hh.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+            hh.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+            self.table.setColumnWidth(3, 180)
+
         self.table.setStyleSheet("""
             QTableWidget {
-                background-color: white;
-                gridline-color: #ecf0f1;
-                border: 1px solid #d1d5db;
-                border-radius: 5px;
+                background-color: #ffffff; border: none;
+                gridline-color: transparent;
             }
             QTableWidget::item {
-                padding: 5px;
+                padding: 0px; border-bottom: 1px solid #f3f4f6;
+            }
+            QTableWidget::item:selected {
+                background-color: #f9fafb; color: #1f2937;
             }
             QHeaderView::section {
-                background-color: #c0392b;
-                color: white;
-                padding: 8px;
-                border: none;
-                font-weight: bold;
+                background-color: #f9fafb; color: #6b7280; padding: 12px 8px;
+                border: none; border-bottom: 2px solid #e5e7eb;
+                font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;
             }
         """)
-        layout.addWidget(self.table)
-        
-        # Details panel
-        details_label = QLabel("Log Details:")
-        details_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        layout.addWidget(details_label)
-        
+        self.table.currentCellChanged.connect(self._on_row_changed)
+        tc_layout.addWidget(self.table)
+        layout.addWidget(table_card)
+
+        # ── Details Card (expandable) ──
+        self.details_card = QFrame()
+        self.details_card.setStyleSheet("""
+            QFrame {
+                background-color: #ffffff;
+                border: 1px solid #e5e7eb;
+                border-radius: 12px;
+            }
+        """)
+        dc_layout = QVBoxLayout(self.details_card)
+        dc_layout.setContentsMargins(16, 12, 16, 12)
+        dc_layout.setSpacing(8)
+
+        dc_header = QHBoxLayout()
+        detail_icon = QLabel()
+        detail_icon.setPixmap(qta.icon('fa5s.info-circle', color='#3b82f6').pixmap(16, 16))
+        detail_icon.setStyleSheet("border: none;")
+        dc_header.addWidget(detail_icon)
+        dc_title = QLabel("Event Details")
+        dc_title.setStyleSheet("font-size: 14px; font-weight: 600; color: #1f2937; border: none;")
+        dc_header.addWidget(dc_title)
+        dc_header.addStretch()
+        dc_layout.addLayout(dc_header)
+
         self.details_text = QTextEdit()
         self.details_text.setReadOnly(True)
-        self.details_text.setMaximumHeight(150)
+        self.details_text.setFixedHeight(120)
         self.details_text.setStyleSheet("""
             QTextEdit {
-                background-color: #f8f9fa;
-                border: 1px solid #d1d5db;
-                border-radius: 5px;
-                padding: 10px;
-                font-family: monospace;
+                background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px;
+                padding: 10px; font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 12px; color: #374151;
             }
         """)
-        layout.addWidget(self.details_text)
-        
-        # Status bar
+        dc_layout.addWidget(self.details_text)
+
+        self.details_card.setVisible(False)
+        layout.addWidget(self.details_card)
+
+        # Status
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet("color: #7f8c8d; padding: 5px;")
+        self.status_label.setStyleSheet("color: #9ca3af; font-size: 12px; padding: 2px 0;")
         layout.addWidget(self.status_label)
-        
-        # Auto-refresh timer (every 30 seconds) - only start if user is admin
+
+        layout.addStretch()
+        scroll.setWidget(container)
+        outer.addWidget(scroll)
+
+        # Auto-refresh timer
         self.auto_refresh_timer = QTimer()
         self.auto_refresh_timer.timeout.connect(self.refresh_data)
-        # Timer will be started in showEvent if user is admin
+
+    # ── Helpers ──
+
+    @staticmethod
+    def _combo_style() -> str:
+        return """
+            QComboBox {
+                padding: 8px 14px; border: 1px solid #d1d5db; border-radius: 8px;
+                font-size: 13px; background: white; min-width: 120px;
+            }
+            QComboBox:focus { border-color: #3b82f6; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView {
+                background: white; border: 1px solid #e5e7eb; border-radius: 6px;
+                selection-background-color: #f3f4f6; selection-color: #1f2937;
+            }
+        """
+
+    # ── Data ──
 
     def refresh_data(self):
-        """Fetch security logs from the API"""
-        # Check if user is admin before attempting to fetch logs
         if not self.api_client.is_admin():
             self.auto_refresh_timer.stop()
             self.status_label.setText("Admin access required")
             return
-        
+
         try:
             self.status_label.setText("Loading security logs...")
             response = self.api_client.session.get(
                 f"{self.api_client.base_url}/security/logs",
-                params={"limit": 100},
-                timeout=10  # Add timeout
+                params={"limit": 200},
+                timeout=10,
             )
-            
             if response.status_code == 200:
-                new_logs = response.json()
-                
-                # Store the original logs
-                self.logs = new_logs
-                
-                # Rebuild activity type filter from actual data
+                self.logs = response.json()
                 self._rebuild_activity_filter()
-                
-                # Apply current filters to display
                 self.apply_filters()
-                
-                self.status_label.setText(f"Loaded {len(self.logs)} security logs (Last updated: {datetime.now().strftime('%H:%M:%S')})")
+                self.status_label.setText(
+                    f"Loaded {len(self.logs)} logs — {datetime.now().strftime('%H:%M:%S')}")
             elif response.status_code == 401:
-                # User is not authenticated - stop timer to prevent repeated errors
                 self.auto_refresh_timer.stop()
                 self.status_label.setText("Not authenticated")
-                return
             else:
-                error_msg = f"HTTP {response.status_code}: {response.text[:200]}"
                 self.status_label.setText(f"Error: {response.status_code}")
-                QMessageBox.warning(self, "Error", f"Failed to load security logs: {error_msg}")
         except Exception as e:
-            self.status_label.setText(f"Error: {str(e)}")
-            QMessageBox.critical(self, "Error", f"Failed to load security logs: {str(e)}")
+            self.status_label.setText(f"Error: {e}")
 
     def _rebuild_activity_filter(self):
-        """Populate activity type filter from actual log data."""
-        current_data = self.activity_filter.currentData()
+        """Populate activity filter dynamically from log data."""
+        current = self.activity_filter.currentData()
         self.activity_filter.blockSignals(True)
         self.activity_filter.clear()
         self.activity_filter.addItem("All", "all")
 
-        seen = set()
+        seen: set[str] = set()
         for log in self.logs:
-            raw = log.get('activity_type', '')
-            if raw and raw not in seen:
-                seen.add(raw)
-                label = raw.replace('_', ' ').title()
-                self.activity_filter.addItem(label, raw)
+            at = log.get('activity_type', '')
+            if at and at not in seen:
+                seen.add(at)
+                style = _ACTIVITY_STYLE.get(at)
+                icon = qta.icon(style[0], color=style[1]) if style else qta.icon('fa5s.circle', color='#9ca3af')
+                self.activity_filter.addItem(icon, _display_label(at), at)
 
-        # Restore previous selection if still present
-        if current_data:
-            idx = self.activity_filter.findData(current_data)
+        if current:
+            idx = self.activity_filter.findData(current)
             if idx >= 0:
                 self.activity_filter.setCurrentIndex(idx)
         self.activity_filter.blockSignals(False)
 
     def apply_filters(self):
-        """Apply filters to the logs"""
-        filtered_logs = self.logs
-        
-        # Filter by activity type (exact match on raw value stored in userData)
+        filtered = self.logs
+
         raw_type = self.activity_filter.currentData()
         if raw_type and raw_type != "all":
-            filtered_logs = [log for log in filtered_logs if log.get('activity_type', '') == raw_type]
-        
-        # Filter by search text
-        search_text = self.search_input.text().lower()
-        if search_text:
-            filtered_logs = [
-                log for log in filtered_logs
-                if search_text in f"{log.get('user', {}).get('first_name', '')} {log.get('user', {}).get('last_name', '')}".lower() or
-                   search_text in log.get('activity_type', '').lower()
+            filtered = [l for l in filtered if l.get('activity_type', '') == raw_type]
+
+        search = self.search_input.text().lower()
+        if search:
+            filtered = [
+                l for l in filtered
+                if search in self._user_name(l).lower()
+                or search in _display_label(l.get('activity_type', '')).lower()
             ]
-        
-        self.populate_table(filtered_logs)
+
+        self.filtered_logs = filtered
+        self.populate_table(filtered)
+
+    @staticmethod
+    def _user_name(log: dict) -> str:
+        user = log.get('user')
+        if not user:
+            return 'Unknown'
+        name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+        return name if name else user.get('username', 'Unknown')
 
     def populate_table(self, logs):
-        """Populate the table with logs"""
         self.table.setRowCount(0)
-        
-        for log in logs:
-            row_position = self.table.rowCount()
-            self.table.insertRow(row_position)
-            
-            # User full name
-            user = log.get('user', {})
-            if user:
-                user_full_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-                if not user_full_name:
-                    user_full_name = user.get('username', 'System')
-            else:
-                user_full_name = 'System'
-            self.table.setItem(row_position, 0, QTableWidgetItem(user_full_name))
-            
-            # Activity Type
-            activity_item = QTableWidgetItem(log.get('activity_type', 'N/A'))
-            # Color code by severity
-            activity_type = log.get('activity_type', '').lower()
-            if 'phone' in activity_type or 'no person' in activity_type:
-                activity_item.setBackground(QColor('#f8d7da'))  # Red for critical
-            elif 'screenshot' in activity_type:
-                activity_item.setBackground(QColor('#fff3cd'))  # Yellow for warning
-            else:
-                activity_item.setBackground(QColor('#d1ecf1'))  # Blue for info
-            self.table.setItem(row_position, 1, activity_item)
-            
-            # Timestamp (convert from UTC to local timezone)
-            timestamp = log.get('timestamp', '')
-            try:
-                # Parse ISO format timestamp with timezone
-                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
-                # Convert to local timezone
-                local_dt = dt.astimezone()
-                formatted_time = local_dt.strftime('%Y-%m-%d %H:%M:%S')
-            except:
-                formatted_time = str(timestamp) if timestamp else 'N/A'
-            self.table.setItem(row_position, 2, QTableWidgetItem(formatted_time))
-            
-            # Details preview
-            details = log.get('details', {})
-            if details:
-                details_preview = str(details)[:50] + "..." if len(str(details)) > 50 else str(details)
-            else:
-                details_preview = "No details"
-            self.table.setItem(row_position, 3, QTableWidgetItem(details_preview))
+        self.details_card.setVisible(False)
 
-    def show_log_details(self):
-        """Show full details of selected log"""
-        selected_items = self.table.selectedItems()
-        if not selected_items:
-            self.details_text.clear()
+        for log in logs:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            self.table.setRowHeight(row, 48)
+
+            # User
+            name = self._user_name(log)
+            user_item = QTableWidgetItem(name)
+            user_item.setForeground(QColor('#1f2937'))
+            self.table.setItem(row, 0, user_item)
+
+            # Activity badge
+            at = log.get('activity_type', '')
+            style = _ACTIVITY_STYLE.get(at, ("fa5s.circle", "#6b7280", "#f3f4f6", at.replace('_', ' ').title()))
+            badge = QWidget()
+            badge_layout = QHBoxLayout(badge)
+            badge_layout.setContentsMargins(8, 4, 8, 4)
+            badge_layout.setSpacing(6)
+
+            act_icon = QLabel()
+            act_icon.setPixmap(qta.icon(style[0], color=style[1]).pixmap(14, 14))
+            act_icon.setStyleSheet("border: none;")
+            badge_layout.addWidget(act_icon)
+
+            act_text = QLabel(style[3] if len(style) > 3 else _display_label(at))
+            act_text.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {style[1]}; border: none;")
+            badge_layout.addWidget(act_text)
+            badge_layout.addStretch()
+
+            badge.setStyleSheet(f"background-color: {style[2]}; border-radius: 6px;")
+            self.table.setCellWidget(row, 1, badge)
+
+            # Details summary
+            details = log.get('details') or {}
+            if isinstance(details, str):
+                try:
+                    details = json.loads(details)
+                except Exception:
+                    details = {}
+            summary = self._details_summary(details, at)
+            detail_item = QTableWidgetItem(summary)
+            detail_item.setForeground(QColor('#6b7280'))
+            self.table.setItem(row, 2, detail_item)
+
+            # Timestamp
+            ts = log.get('timestamp', '')
+            try:
+                dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
+                formatted = dt.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+            except Exception:
+                formatted = str(ts) if ts else 'N/A'
+            ts_item = QTableWidgetItem(formatted)
+            ts_item.setForeground(QColor('#9ca3af'))
+            self.table.setItem(row, 3, ts_item)
+
+    @staticmethod
+    def _details_summary(details: dict, activity_type: str) -> str:
+        """Return a short human-readable summary of the details dict."""
+        if not details:
+            return "—"
+        parts: list[str] = []
+        if 'document_name' in details:
+            parts.append(f"Doc: {details['document_name']}")
+        if 'confidence' in details:
+            parts.append(f"Conf: {details['confidence']:.0%}" if isinstance(details['confidence'], (int, float)) else f"Conf: {details['confidence']}")
+        if 'duration_seconds' in details:
+            parts.append(f"Duration: {details['duration_seconds']}s")
+        if not parts:
+            # Fallback: show first few keys
+            for k, v in list(details.items())[:2]:
+                parts.append(f"{k.replace('_', ' ').title()}: {v}")
+        return " · ".join(parts) if parts else "—"
+
+    def _on_row_changed(self, current_row, _col, _prev_row, _prev_col):
+        """Show details card when a row is selected."""
+        if current_row < 0 or current_row >= len(self.filtered_logs):
+            self.details_card.setVisible(False)
             return
-        
-        row = selected_items[0].row()
-        
-        # Find the log by matching the row data
-        if row < len(self.logs):
-            # Get the current filtered/sorted logs
-            # For simplicity, we'll search through all logs
-            user_name = self.table.item(row, 0).text() if self.table.item(row, 0) else ""
-            timestamp_str = self.table.item(row, 2).text() if self.table.item(row, 2) else ""
-            
-            # Find matching log
-            log = None
-            for l in self.logs:
-                user = l.get('user', {})
-                full_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
-                if not full_name:
-                    full_name = user.get('username', 'System')
-                if full_name == user_name:
-                    log = l
-                    break
-            
-            if not log and self.logs:
-                # Fallback to first matching timestamp
-                for l in self.logs:
-                    try:
-                        ts = l.get('timestamp', '')
-                        dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                        if dt.strftime('%Y-%m-%d %H:%M:%S') == timestamp_str:
-                            log = l
-                            break
-                    except:
-                        pass
-            
-            if log:
-                user = log.get('user', {})
-                details = {
-                    "User": f"{user.get('first_name', '')} {user.get('last_name', '')}" if user else "System",
-                    "Username": user.get('username', 'N/A') if user else "N/A",
-                    "Activity Type": log.get('activity_type'),
-                    "Timestamp": log.get('timestamp'),
-                    "Metadata": log.get('details', {})
-                }
-                self.details_text.setText(json.dumps(details, indent=2))
-            else:
-                self.details_text.setText("Log details not found")
+
+        log = self.filtered_logs[current_row]
+        details = log.get('details') or {}
+        if isinstance(details, str):
+            try:
+                details = json.loads(details)
+            except Exception:
+                details = {}
+
+        if details:
+            pretty = json.dumps(details, indent=2, default=str)
+            self.details_text.setPlainText(pretty)
+            self.details_card.setVisible(True)
         else:
-            self.details_text.setText("Log details not found")
+            self.details_card.setVisible(False)
+
+    # ── Lifecycle ──
 
     def showEvent(self, event):
-        """Refresh data when view is shown"""
         super().showEvent(event)
-        # Only refresh and start timer if user is admin
         if self.api_client.is_admin():
             if not self.auto_refresh_timer.isActive():
-                self.auto_refresh_timer.start(30000)  # 30 seconds
+                self.auto_refresh_timer.start(30000)
             self.refresh_data()
         else:
             self.status_label.setText("Admin access required")
-    
+
     def hideEvent(self, event):
-        """Stop timer when view is hidden"""
         super().hideEvent(event)
         if self.auto_refresh_timer.isActive():
             self.auto_refresh_timer.stop()

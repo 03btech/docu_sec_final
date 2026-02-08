@@ -35,6 +35,7 @@ class LoginWindow(QDialog):
         self.setWindowTitle("Document Security")
         self.setFixedSize(480, 540)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         
         # For window dragging
         self.dragging = False

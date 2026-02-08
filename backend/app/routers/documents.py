@@ -256,6 +256,16 @@ async def upload_file(
     )
     document = await crud.create_document(db, doc_data, current_user.id, str(file_path))
 
+    # Log the upload action
+    await crud.create_access_log(
+        db,
+        schemas.AccessLogCreate(
+            document_id=document.id,
+            user_id=current_user.id,
+            action="upload",
+        ),
+    )
+
     # Kick off background classification
     background_tasks.add_task(classify_document_pipeline, document.id, str(file_path))
 
