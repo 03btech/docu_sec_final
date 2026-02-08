@@ -89,69 +89,15 @@ Write-Success "pip upgraded to latest version"
 
 # Step 6: Install dependencies
 Write-Header "Step 6: Installing Dependencies"
-Write-Info "This may take several minutes..."
+Write-Info "This may take several minutes (large packages like PyTorch, OpenCV)..."
 Write-Host ""
 
-$packages = @(
-    "PyQt6",
-    "PyQt6-Qt6",
-    "requests",
-    "qtawesome",
-    "opencv-python",
-    "ultralytics",
-    "torch",
-    "torchvision",
-    "PyMuPDF",
-    "python-docx",
-    "Pillow"
-)
+pip install -r requirements.txt --timeout 120 --retries 5
 
-$totalPackages = $packages.Count
-$current = 0
-
-Write-Host "  Note: Large packages may take several minutes to download" -ForegroundColor Yellow
-Write-Host ""
-
-foreach ($package in $packages) {
-    $current++
-    Write-Host "  [$current/$totalPackages] Installing $package..." -ForegroundColor Cyan -NoNewline
-    
-    # Retry logic for network issues
-    $maxRetries = 3
-    $retryCount = 0
-    $success = $false
-    
-    while (-not $success -and $retryCount -lt $maxRetries) {
-        if ($retryCount -gt 0) {
-            Write-Host ""
-            Write-Host "  Retrying ($retryCount/$maxRetries)..." -ForegroundColor Yellow -NoNewline
-        }
-        
-        # Use longer timeout and show output for large packages
-        if ($package -match "PyQt6|torch|torchvision|opencv-python|ultralytics") {
-            pip install $package --timeout 120 --retries 5 2>&1 | Out-Null
-        }
-        else {
-            pip install $package --timeout 60 2>&1 | Out-Null
-        }
-        
-        if ($LASTEXITCODE -eq 0) {
-            $success = $true
-            Write-Host " [OK]" -ForegroundColor Green
-        }
-        else {
-            $retryCount++
-            if ($retryCount -lt $maxRetries) {
-                Start-Sleep -Seconds 2
-            }
-        }
-    }
-    
-    if (-not $success) {
-        Write-Host " [ERROR]" -ForegroundColor Red
-        Write-Error-Custom "Failed to install $package after $maxRetries attempts"
-        Write-Info "You may need to install it manually: pip install $package"
-    }
+if ($LASTEXITCODE -ne 0) {
+    Write-Error-Custom "Failed to install some dependencies!"
+    Write-Info "Try running manually: pip install -r requirements.txt"
+    exit 1
 }
 
 Write-Host ""
@@ -199,9 +145,9 @@ else {
 # Step 9: Check backend connection
 Write-Header "Step 9: Checking Backend Connection"
 try {
-    $response = Invoke-WebRequest -Uri "http://localhost:8000/" -TimeoutSec 3 -UseBasicParsing 2>$null
+    $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -TimeoutSec 5 -UseBasicParsing 2>$null
     if ($response.StatusCode -eq 200) {
-        Write-Success "Backend is running (http://localhost:8000)"
+        Write-Success "Backend is healthy (http://localhost:8000/health)"
     }
 }
 catch {

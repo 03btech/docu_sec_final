@@ -4,16 +4,16 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
+    env_file:
+      - ./backend/.env
     environment:
-      POSTGRES_DB: docu_security_db
-      POSTGRES_USER: docusec_user
-      POSTGRES_PASSWORD: infosysyrab
-      # Set timezone to UTC (matches backend)
+      # DB credentials loaded from backend/.env via env_file above
+      # (POSTGRES_DB, POSTGRES_USER, POSTGRES_PASSWORD are defined there)
       TZ: UTC
       PGTZ: UTC
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U docusec_user -d docu_security_db"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -29,13 +29,24 @@ services:
       - ./backend/seed_data.py:/app/seed_data.py
       # Persistent volume for uploaded files
       - uploaded_files_data:/app/uploaded_files
-      # DON'T mount the entire ./backend:/app to avoid overwriting pip packages
+      # Mount GCP credentials as read-only (Vertex AI)
+      - ../credentials:/app/credentials:ro
     env_file:
       - ./backend/.env
+    # Graceful shutdown: Gemini API calls can take up to 30s.
+    # Docker default SIGTERM grace period is 10s — 60s gives the pipeline time
+    # to catch asyncio.CancelledError and set 'failed' status.
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     depends_on:
       db:
         condition: service_healthy
 
 volumes:
   postgres_data:
-  uploaded_files_data: # NEW: Define the named volume for uploaded files
+  uploaded_files_data:

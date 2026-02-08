@@ -1,68 +1,181 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from starlette.responses import FileResponse
-import os
-import shutil
-from pathlib import Path
 import asyncio
-from ..database import get_db, async_session
+import logging
+import os
+from pathlib import Path
+from uuid import uuid4
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
+from sqlalchemy import func, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import FileResponse
+
+from ..database import async_session, get_db
 from .. import crud, models, schemas
 from ..dependencies import get_current_user
-from ml.classifier import classify_document
+from ..rate_limit import limiter
+from ml.classifier import extract_document_text_async, classify_extracted_text_async
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-UPLOAD_DIR = Path("/app/uploaded_files")
-UPLOAD_DIR.mkdir(exist_ok=True)
+UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/app/uploaded_files"))
 
-async def classify_and_update_document(doc_id: int, file_path: str):
-    """Background task to classify document and update DB."""
-    classification_str = await asyncio.to_thread(classify_document, file_path)
-    
-    # Map to enum
+# Daily upload quota per user (cost guardrail for Gemini API calls)
+MAX_UPLOADS_PER_USER_PER_DAY = int(os.getenv("MAX_UPLOADS_PER_USER_PER_DAY", "50"))
+
+# Maximum file size in bytes (default 100MB)
+MAX_UPLOAD_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_MB", "100")) * 1024 * 1024
+
+async def _update_status(db: AsyncSession, doc_id: int, status, error=None):
+    """Update classification_status atomically. Rolls back on failure (P1-REVIEW-7)."""
     try:
-        classification = models.ClassificationLevel(classification_str)
-    except ValueError:
-        classification = models.ClassificationLevel.unclassified
+        await db.execute(
+            update(models.Document)
+            .where(models.Document.id == doc_id)
+            .values(
+                classification_status=status,
+                classification_error=error,
+            )
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
+
+def _sanitize_classification_error(exc: Exception) -> str:
+    """Map exception types to safe user-facing messages (P0-REVIEW-6)."""
+    error_type = type(exc).__name__
+    SAFE_ERROR_MAP = {
+        "Unauthenticated": "Authentication error — contact your administrator.",
+        "PermissionDenied": "Service account lacks required permissions — contact admin.",
+        "ResourceExhausted": "Classification service temporarily busy — retry later.",
+        "InvalidArgument": "Document could not be processed by the classification service.",
+        "DeadlineExceeded": "Classification timed out — retry later.",
+        "ServiceUnavailable": "Classification service temporarily unavailable — retry later.",
+        "InternalServerError": "Classification service encountered an internal error — retry later.",
+        "ValueError": str(exc)[:500],
+        "RuntimeError": "Classification configuration error — contact your administrator.",
+    }
+    return SAFE_ERROR_MAP.get(
+        error_type,
+        f"Classification failed ({error_type}). Contact admin if this persists.",
+    )
+
+
+async def classify_document_pipeline(doc_id: int, file_path: str):
+    """Background pipeline: extract text → classify via Vertex AI, with status updates.
+
+    Creates its own AsyncSession (request-scoped session is closed by the time
+    BackgroundTasks run). Uses atomic CAS to prevent duplicate pipelines.
+    """
+    run_id = uuid4().hex[:8]
+    logger.info("[run=%s] Starting pipeline for doc %d: %s", run_id, doc_id, file_path)
 
     async with async_session() as db:
-        result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
-        document = result.scalars().first()
-        if document:
-            document.classification = classification
+        try:
+            # Atomic CAS: queued → extracting_text (prevents duplicate pipelines)
+            cas_result = await db.execute(
+                update(models.Document)
+                .where(
+                    models.Document.id == doc_id,
+                    models.Document.classification_status == models.ClassificationStatus.queued,
+                )
+                .values(
+                    classification_status=models.ClassificationStatus.extracting_text,
+                    classification_error=None,
+                    classification_queued_at=func.now(),
+                )
+            )
             await db.commit()
+            if cas_result.rowcount == 0:
+                logger.info("[run=%s] Doc %d: already past 'queued', skipping", run_id, doc_id)
+                return
+
+            # Stage 1: Text extraction
+            text_or_chunks = await extract_document_text_async(file_path)
+            if not text_or_chunks:
+                logger.warning("[run=%s] No text extracted from %s", run_id, file_path)
+                await _update_status(
+                    db, doc_id, models.ClassificationStatus.failed,
+                    error="No text could be extracted from the document",
+                )
+                return
+
+            # Stage 2: Gemini classification
+            await _update_status(db, doc_id, models.ClassificationStatus.classifying)
+            classification_str = await classify_extracted_text_async(text_or_chunks, file_path)
+
+            # Stage 3: Done
+            classification = models.ClassificationLevel(classification_str)
+            result = await db.execute(
+                select(models.Document).where(models.Document.id == doc_id)
+            )
+            document = result.scalars().first()
+            if document:
+                document.classification = classification
+                document.classification_status = models.ClassificationStatus.completed
+                if classification == models.ClassificationLevel.unclassified:
+                    document.classification_error = (
+                        "Low confidence — Gemini could not determine a classification. "
+                        "Manual review recommended."
+                    )
+                else:
+                    document.classification_error = None
+                await db.commit()
+
+        except asyncio.CancelledError:
+            logger.warning("[run=%s] Pipeline cancelled for doc %d (shutdown?)", run_id, doc_id)
+            try:
+                async with async_session() as cancel_db:
+                    await _update_status(
+                        cancel_db, doc_id, models.ClassificationStatus.failed,
+                        error="Classification interrupted (server shutdown)",
+                    )
+            except Exception:
+                pass
+            raise
+
+        except Exception as e:
+            logger.error("[run=%s] Pipeline failed for doc %d: %s", run_id, doc_id, e)
+            safe_error = _sanitize_classification_error(e)
+            try:
+                async with async_session() as error_db:
+                    await _update_status(
+                        error_db, doc_id, models.ClassificationStatus.failed,
+                        error=safe_error,
+                    )
+            except Exception as status_err:
+                logger.error("Failed to update error status for doc %d: %s", doc_id, status_err)
+
 
 async def cleanup_orphaned_files():
     """Utility function to clean up files that exist in volume but not in database."""
     try:
-        # Get all files in upload directory
-        existing_files = set()
+        existing_files: set[str] = set()
         if UPLOAD_DIR.exists():
-            for file_path in UPLOAD_DIR.iterdir():
-                if file_path.is_file():
-                    existing_files.add(str(file_path))
+            for fp in UPLOAD_DIR.iterdir():
+                if fp.is_file():
+                    existing_files.add(str(fp))
 
-        # Get all file paths from database
         async with async_session() as db:
             result = await db.execute(select(models.Document.file_path))
             db_file_paths = set(row[0] for row in result.fetchall())
 
-        # Find orphaned files
         orphaned_files = existing_files - db_file_paths
 
-        # Delete orphaned files
         deleted_count = 0
-        for file_path in orphaned_files:
+        for fp in orphaned_files:
             try:
-                os.remove(file_path)
+                os.remove(fp)
                 deleted_count += 1
             except Exception as e:
-                print(f"Warning: Could not delete orphaned file {file_path}: {e}")
+                logger.warning("Could not delete orphaned file %s: %s", fp, e)
 
         return {"deleted_count": deleted_count, "orphaned_files": list(orphaned_files)}
     except Exception as e:
-        print(f"Error during cleanup: {e}")
+        logger.error("Error during cleanup: %s", e)
         return {"error": str(e)}
 
 @router.post("/upload", response_model=schemas.Document)
@@ -70,29 +183,71 @@ async def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    current_user: models.User = Depends(get_current_user)
+    current_user: models.User = Depends(get_current_user),
 ):
-    # Save file
-    file_path = UPLOAD_DIR / f"{current_user.id}_{file.filename}"
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+    # Validate file type
+    ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type: '{ext}'. Allowed: {', '.join(ALLOWED_EXTENSIONS)}",
+        )
 
-    # Classify synchronously
-    classification_str = await asyncio.to_thread(classify_document, str(file_path))
-    
-    # Map to enum
+    # Pre-check file size (UploadFile.size may be None for streaming uploads)
+    if file.size is not None and file.size > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({file.size / (1024*1024):.1f}MB). Maximum: {MAX_UPLOAD_SIZE_BYTES / (1024*1024):.0f}MB",
+        )
+
+    # Daily upload quota (P2-REVIEW-15: exclude failed docs from count)
+    count_result = await db.execute(
+        select(func.count(models.Document.id)).where(
+            models.Document.owner_id == current_user.id,
+            models.Document.upload_date >= func.now() - text("INTERVAL '1 day'"),
+            models.Document.classification_status != models.ClassificationStatus.failed,
+        )
+    )
+    uploads_today = count_result.scalar() or 0
+    if uploads_today >= MAX_UPLOADS_PER_USER_PER_DAY:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Daily upload limit reached ({MAX_UPLOADS_PER_USER_PER_DAY}). Try again tomorrow.",
+        )
+
+    # Save file with UUID prefix to prevent collisions
+    safe_filename = f"{current_user.id}_{uuid4().hex[:8]}_{file.filename}"
+    file_path = UPLOAD_DIR / safe_filename
+    total_bytes = 0
     try:
-        classification = models.ClassificationLevel(classification_str)
-    except ValueError:
-        classification = models.ClassificationLevel.unclassified
+        with open(file_path, "wb") as buffer:
+            while chunk := await file.read(1024 * 1024):
+                total_bytes += len(chunk)
+                if total_bytes > MAX_UPLOAD_SIZE_BYTES:
+                    buffer.close()
+                    os.remove(file_path)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large (>{MAX_UPLOAD_SIZE_BYTES / (1024*1024):.0f}MB). Upload rejected.",
+                    )
+                buffer.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as e:
+        if file_path.exists():
+            os.remove(file_path)
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {e}")
 
-    # Create document record
-    doc_data = schemas.DocumentCreate(filename=file.filename, classification=classification)
+    # Create document record with 'queued' status
+    doc_data = schemas.DocumentCreate(
+        filename=file.filename,
+        classification=models.ClassificationLevel.unclassified,
+    )
     document = await crud.create_document(db, doc_data, current_user.id, str(file_path))
 
-    # If classification failed, add background task to try again
-    if classification == models.ClassificationLevel.unclassified:
-        background_tasks.add_task(classify_and_update_document, document.id, str(file_path))
+    # Kick off background classification
+    background_tasks.add_task(classify_document_pipeline, document.id, str(file_path))
 
     return document
 
@@ -130,6 +285,37 @@ async def list_department_documents(
     documents = await crud.get_department_documents(db, current_user.department_id, current_user.id)
     return documents
 
+@router.get("/documents/{doc_id}/classification-status",
+            response_model=schemas.ClassificationStatusResponse)
+@limiter.limit("2/second")
+async def get_classification_status(
+    request: Request,
+    doc_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(models.Document).where(models.Document.id == doc_id)
+    )
+    document = result.scalars().first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if document.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the document owner can check classification status")
+
+    return {
+        "doc_id": doc_id,
+        "status": document.classification_status,
+        "classification": (
+            document.classification
+            if document.classification_status == models.ClassificationStatus.completed
+            else None
+        ),
+        "error": document.classification_error,
+    }
+
+
 @router.get("/documents/view/{doc_id}")
 async def view_document(
     doc_id: int,
@@ -137,38 +323,23 @@ async def view_document(
     current_user: models.User = Depends(get_current_user)
 ):
     """View document - returns file content for secure viewing only."""
-    # DEBUG: Log the authorization check
-    print(f"\n=== VIEW DOCUMENT DEBUG ===")
-    print(f"Document ID: {doc_id}")
-    print(f"User: {current_user.username} (ID: {current_user.id})")
-    print(f"User Department: {current_user.department_id}")
-    
     allowed, reason = await crud.authorize_document_action(db, doc_id, current_user, 'view')
-    
-    print(f"Authorization Result: allowed={allowed}, reason={reason}")
-    
+
     if not allowed:
-        print(f"❌ Access DENIED: {reason}")
+        logger.debug("View DENIED for doc %d by user %s: %s", doc_id, current_user.username, reason)
         raise HTTPException(status_code=403, detail=reason)
     
     document = await crud.get_document(db, doc_id)
     if not document:
-        print(f"❌ Document not found in database")
         raise HTTPException(status_code=404, detail="Document not found")
 
-    print(f"Document: {document.filename}")
-    print(f"Classification: {document.classification}")
-    print(f"Owner ID: {document.owner_id}")
-    
     file_path = document.file_path
-    print(f"File Path: {file_path}")
     
     if not os.path.exists(file_path):
-        print(f"❌ File not found on disk: {file_path}")
+        logger.debug("File not found on disk for doc %d: %s", doc_id, file_path)
         raise HTTPException(status_code=404, detail="File not found on server")
 
-    print(f"✅ Access GRANTED - Returning file")
-    print(f"=== END DEBUG ===\n")
+    logger.debug("View GRANTED for doc %d (%s) to user %s", doc_id, document.filename, current_user.username)
     
     # Log view access
     await crud.create_access_log(db, schemas.AccessLogCreate(
@@ -299,7 +470,7 @@ async def delete_document(
             os.remove(file_path)
     except Exception as e:
         # Log the error but don't fail the delete operation
-        print(f"Warning: Could not delete file {file_path}: {e}")
+        logger.warning("Could not delete file %s: %s", file_path, e)
 
     return {"message": "Document deleted"}
 
@@ -308,8 +479,7 @@ async def cleanup_orphaned_files_endpoint(
     current_user: models.User = Depends(get_current_user)
 ):
     """Admin endpoint to clean up orphaned files (files without database records)."""
-    # Check if user is admin (you might want to add proper admin role checking)
-    if not current_user.username == "admin":  # Adjust this condition based on your admin logic
+    if current_user.role != models.UserRole.admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     
     result = await cleanup_orphaned_files()
@@ -389,3 +559,109 @@ async def update_permission(
     ))
     
     return {"message": "Permission updated successfully"}
+
+
+# ---------------------------------------------------------------------------
+# Retry endpoints
+# ---------------------------------------------------------------------------
+
+MAX_RETRY_BATCH_SIZE = int(os.getenv("MAX_RETRY_BATCH_SIZE", "20"))
+
+
+@router.post("/admin/retry-failed-classifications")
+async def retry_failed_classifications(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Admin endpoint: retry all documents stuck in 'failed' classification status."""
+    if current_user.role != models.UserRole.admin:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    result = await db.execute(
+        select(models.Document).where(
+            models.Document.classification_status == models.ClassificationStatus.failed
+        )
+    )
+    failed_docs = result.scalars().all()
+
+    if not failed_docs:
+        return {"message": "No failed classifications to retry", "count": 0}
+
+    queued_count = 0
+    skipped_missing: list[dict] = []
+    for doc in failed_docs:
+        if queued_count >= MAX_RETRY_BATCH_SIZE:
+            break
+
+        if not os.path.exists(doc.file_path):
+            skipped_missing.append({"id": doc.id, "file_path": doc.file_path})
+            doc.classification_error = "File not found on disk — cannot retry"
+            continue
+
+        cas_result = await db.execute(
+            update(models.Document)
+            .where(
+                models.Document.id == doc.id,
+                models.Document.classification_status == models.ClassificationStatus.failed,
+            )
+            .values(
+                classification_status=models.ClassificationStatus.queued,
+                classification_error=None,
+            )
+        )
+        if cas_result.rowcount > 0:
+            background_tasks.add_task(classify_document_pipeline, doc.id, doc.file_path)
+            queued_count += 1
+
+    await db.commit()
+
+    remaining = len(failed_docs) - queued_count - len(skipped_missing)
+    resp: dict = {"message": f"Retrying {queued_count} failed classifications", "count": queued_count}
+    if remaining > 0:
+        resp["remaining"] = remaining
+        resp["note"] = f"{remaining} documents remain in failed state. Call this endpoint again to retry the next batch."
+    if skipped_missing:
+        resp["skipped_missing_files"] = skipped_missing
+    return resp
+
+
+@router.post("/documents/{doc_id}/retry-classification")
+async def retry_document_classification(
+    doc_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Owner endpoint: retry classification for a single failed document."""
+    result = await db.execute(
+        select(models.Document).where(models.Document.id == doc_id)
+    )
+    document = result.scalars().first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if document.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the document owner can retry classification")
+
+    if document.classification_status != models.ClassificationStatus.failed:
+        raise HTTPException(status_code=400, detail="Only failed classifications can be retried")
+
+    cas_result = await db.execute(
+        update(models.Document)
+        .where(
+            models.Document.id == doc_id,
+            models.Document.classification_status == models.ClassificationStatus.failed,
+        )
+        .values(
+            classification_status=models.ClassificationStatus.queued,
+            classification_error=None,
+        )
+    )
+    await db.commit()
+
+    if cas_result.rowcount == 0:
+        raise HTTPException(status_code=409, detail="Classification retry already in progress")
+
+    background_tasks.add_task(classify_document_pipeline, document.id, document.file_path)
+    return {"message": "Retrying classification", "doc_id": doc_id}

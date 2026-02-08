@@ -127,9 +127,9 @@ if ($requireUpdate) {
 # Check if backend is running
 Write-Step "Checking backend connection..."
 try {
-    $response = Invoke-WebRequest -Uri "http://localhost:8000/" -TimeoutSec 3 -UseBasicParsing 2>$null
+    $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -TimeoutSec 5 -UseBasicParsing 2>$null
     if ($response.StatusCode -eq 200) {
-        Write-Success "Backend is running (http://localhost:8000)"
+        Write-Success "Backend is healthy (http://localhost:8000/health)"
     }
 } catch {
     Write-Host "! " -ForegroundColor Yellow -NoNewline

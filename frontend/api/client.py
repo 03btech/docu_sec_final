@@ -279,6 +279,46 @@ class APIClient:
         else:
             return False, response.json().get("detail", "Unknown error")
     
+    def get_classification_status(self, doc_id: int) -> Optional[Dict[str, Any]]:
+        """Poll classification pipeline status.
+
+        Returns:
+            dict with status data on success,
+            {"status": "rate_limited"} on 429 (caller should back off),
+            None on network errors (caller retries next tick).
+        """
+        try:
+            response = self.session.get(
+                f"{self.base_url}/documents/{doc_id}/classification-status",
+                timeout=5  # Short timeout — polling should be fast
+            )
+            if response.status_code == 200:
+                return response.json()
+            if response.status_code == 429:
+                # Rate limited by slowapi — signal caller to back off
+                return {"status": "rate_limited"}
+            return None
+        except Exception:
+            return None  # Network hiccup, retry next tick
+
+    def retry_classification(self, doc_id: int) -> bool:
+        """Retry classification for a failed document.
+
+        Calls POST /documents/{doc_id}/retry-classification.
+        Returns True on success, raises on failure.
+        Used by the retry button in the upload error dialog.
+        """
+        try:
+            response = self.session.post(
+                f"{self.base_url}/documents/{doc_id}/retry-classification",
+                timeout=10
+            )
+            if response.status_code == 200:
+                return True
+            raise Exception(f"Retry failed: {response.status_code} - {response.text}")
+        except Exception:
+            raise  # Let caller handle
+
     def change_password(self, current_password: str, new_password: str) -> tuple[bool, str]:
         """Change current user's password."""
         data = {

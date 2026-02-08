@@ -4,12 +4,14 @@ FROM python:3.10-slim-bookworm
 # Set the working directory in the container
 WORKDIR /app
 
-# Install system dependencies required for psycopg2 and other packages
-# (e.g., PostgreSQL client libraries, build tools)
+# Install system dependencies
+# - build-essential/gcc: for compiling asyncpg Cython extensions
+# - curl: required for Docker Compose healthcheck (curl -f http://localhost:8000/health)
+# - libpq-dev removed: was needed for psycopg2-binary (now using asyncpg)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    libpq-dev \
     gcc \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the requirements.txt file first to leverage Docker cache
@@ -28,7 +30,7 @@ COPY ./seed_data.py /app/seed_data.py
 # Expose the port on which the FastAPI application will run
 EXPOSE 8000
 
-# Command to run the application (using Uvicorn, which fastapi[all] includes)
-# --host 0.0.0.0 makes the server accessible from outside the container
-# --reload enables hot-reloading for development (remove for production)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Command to run the application
+# --reload REMOVED for production. Use docker-compose.override.yml for dev:
+#   command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

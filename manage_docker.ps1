@@ -129,9 +129,9 @@ switch ($Command) {
         # Check backend
         Write-Host "Backend:     " -NoNewline
         try {
-            $response = Invoke-WebRequest -Uri "http://localhost:8000/" -TimeoutSec 3 -UseBasicParsing 2>$null
+            $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -TimeoutSec 5 -UseBasicParsing 2>$null
             if ($response.StatusCode -eq 200) {
-                Write-Host "[OK] Running (http://localhost:8000)" -ForegroundColor Green
+                Write-Host "[OK] Healthy (http://localhost:8000/health)" -ForegroundColor Green
             }
         }
         catch {
@@ -162,8 +162,19 @@ switch ($Command) {
         
         Write-Info "Creating backup: $backupFile"
         
+        # Read DB credentials from .env (fall back to defaults)
+        $pgUser = "docusec_user"
+        $pgDb = "docu_security_db"
+        if (Test-Path "backend\.env") {
+            $envLines = Get-Content "backend\.env"
+            foreach ($line in $envLines) {
+                if ($line -match "^POSTGRES_USER=(.+)") { $pgUser = $Matches[1].Trim() }
+                if ($line -match "^POSTGRES_DB=(.+)") { $pgDb = $Matches[1].Trim() }
+            }
+        }
+        
         # Create backup
-        docker exec docu_sec_final-db-1 pg_dump -U docusec_user docu_security_db > $backupFile
+        docker exec docu_sec_final-db-1 pg_dump -U $pgUser $pgDb > $backupFile
         
         if ($LASTEXITCODE -eq 0) {
             $fileSize = (Get-Item $backupFile).Length / 1KB
@@ -211,7 +222,19 @@ switch ($Command) {
         }
         
         Write-Info "Restoring from: $($selectedBackup.Name)"
-        Get-Content $selectedBackup.FullName | docker exec -i docu_sec_final-db-1 psql -U docusec_user docu_security_db
+        
+        # Read DB credentials from .env (fall back to defaults)
+        $pgUser = "docusec_user"
+        $pgDb = "docu_security_db"
+        if (Test-Path "backend\.env") {
+            $envLines = Get-Content "backend\.env"
+            foreach ($line in $envLines) {
+                if ($line -match "^POSTGRES_USER=(.+)") { $pgUser = $Matches[1].Trim() }
+                if ($line -match "^POSTGRES_DB=(.+)") { $pgDb = $Matches[1].Trim() }
+            }
+        }
+        
+        Get-Content $selectedBackup.FullName | docker exec -i docu_sec_final-db-1 psql -U $pgUser $pgDb
         
         if ($LASTEXITCODE -eq 0) {
             Write-Success "Database restored successfully"

@@ -1,92 +1,13 @@
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
 import os
-import re
-from typing import Dict, List, Tuple
-from transformers import pipeline
+import asyncio
+from typing import List, Tuple, Union
 import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+from ml.vertex_ai_classifier import classify_text_with_gemini
+
 logger = logging.getLogger(__name__)
-
-# Lazy load the zero-shot classification pipeline
-classifier = None
-
-def get_classifier():
-    global classifier
-    if classifier is None:
-        logger.info("Loading zero-shot classification pipeline...")
-        classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
-        logger.info("Pipeline loaded successfully.")
-    return classifier
-
-# Enhanced keyword patterns for classification
-CLASSIFICATION_KEYWORDS = {
-    "confidential": [
-        # Explicit confidentiality markers
-        r"\b(confidential|classified|restricted|proprietary|private)\b",
-        r"\b(top secret|secret|sensitive|privileged)\b",
-        r"\b(do not distribute|internal use only|not for public)\b",
-        
-        # Financial/Legal sensitive terms
-        r"\b(salary|wage|compensation|budget|revenue|profit|loss)\b",
-        r"\b(ssn|social security|tax id|ein|bank account|credit card)\b",
-        r"\b(merger|acquisition|layoff|termination|disciplinary)\b",
-        r"\b(lawsuit|legal action|settlement|litigation)\b",
-        
-        # Personal/HR sensitive data
-        r"\b(medical|health|disability|personal information)\b",
-        r"\b(performance review|disciplinary action|termination)\b",
-        
-        # Business sensitive
-        r"\b(trade secret|intellectual property|patent|proprietary)\b",
-        r"\b(client list|customer data|pricing strategy|business plan)\b"
-    ],
-    
-    "internal": [
-        # Internal operations
-        r"\b(internal|employee only|staff only|team|department)\b",
-        r"\b(meeting notes|agenda|minutes|internal memo|memo)\b",
-        r"\b(policy|procedure|guideline|handbook|manual)\b",
-        r"\b(project plan|roadmap|timeline|milestone|sprint)\b",
-        
-        # Organizational terms
-        r"\b(hr|human resources|it|information technology)\b",
-        r"\b(admin|administration|operations|logistics)\b",
-        r"\b(training|onboarding|orientation|internal training)\b",
-        
-        # Internal communications
-        r"\b(all hands|company wide|organization|corporate|quarterly)\b",
-        r"\b(performance|evaluation|review|assessment)\b",
-        r"\b(company-wide|organization-wide|internal announcement)\b"
-    ],
-    
-    "public": [
-        # Public-facing content
-        r"\b(public|announcement|press release|news|external)\b",
-        r"\b(marketing|advertisement|promotion|campaign)\b",
-        r"\b(website|blog|social media|public event)\b",
-        r"\b(customer|client|visitor|guest|general public)\b",
-        
-        # General information
-        r"\b(general|common|standard|basic|open to all)\b",
-        r"\b(faq|frequently asked|help|support|public info)\b",
-        r"\b(welcome|introduction|overview|summary)\b",
-        
-        # Public events
-        r"\b(conference|seminar|workshop|presentation|picnic)\b",
-        r"\b(event|celebration|party|gathering|open house)\b",
-        r"\b(families|everyone|all welcome|public invitation)\b"
-    ]
-}
-
-# Confidence thresholds for classification
-CONFIDENCE_THRESHOLDS = {
-    "high": 0.7,
-    "medium": 0.5,
-    "low": 0.1
-}
 
 def extract_text_from_file(file_path: str) -> str:
     """Extract text from PDF, DOCX, or TXT files with better error handling."""
@@ -114,7 +35,7 @@ def extract_text_pdf(file_path: str) -> str:
                 try:
                     page_text = page.get_text()  # type: ignore
                     if page_text.strip():  # Only add non-empty pages
-                        text += f"\n--- Page {page_num + 1} ---\n{page_text}"
+                        text += f"\n{page_text}"
                 except Exception as e:
                     logger.warning(f"Error extracting page {page_num + 1}: {e}")
                     continue
@@ -166,166 +87,206 @@ def extract_text_txt(file_path: str) -> str:
     
     return ""
 
-def preprocess_text(text: str) -> str:
-    """Clean and preprocess text for better classification."""
-    if not text:
-        return ""
-    
-    # Remove excessive whitespace
-    text = re.sub(r'\s+', ' ', text)
-    
-    # Remove common noise patterns
-    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\xff]', '', text)
-    
-    # Remove page numbers and headers/footers patterns
-    text = re.sub(r'--- Page \d+ ---', '', text)
-    text = re.sub(r'\bPage \d+\b', '', text)
-    
+
+# ============================================
+# Large PDF Page-Range Splitting (Step 2b)
+# ============================================
+MAX_PAGES_PER_PART = int(os.getenv("PDF_MAX_PAGES_PER_PART", "500"))
+MAX_TOTAL_PAGES = int(os.getenv("PDF_MAX_TOTAL_PAGES", "10000"))  # Cost guardrail
+MAX_CHUNKS = int(os.getenv("PDF_MAX_CHUNKS", "10"))  # Max Gemini API calls per document
+SECURITY_RANK = {"confidential": 3, "internal": 2, "public": 1, "unclassified": 0}
+
+# P1-7 FIX: Token limit guard for non-PDF files (DOCX, TXT).
+# Approximate token count: 1 token ≈ 4 chars (English average).
+# Default: 3,000,000 chars ≈ 750K tokens, within Gemini's 1M limit with headroom.
+MAX_TEXT_CHARS = int(os.getenv("MAX_TEXT_CHARS_PER_CLASSIFICATION", "3000000"))
+
+# ⚠️ REVIEW FIX P1-REVIEW-8 (DOCX MEMORY GUARD):
+# python-docx loads the entire DOCX into memory (DOM model). A 200MB DOCX with
+# embedded images could OOM the container. Check file size before extraction.
+MAX_DOCX_FILE_SIZE_BYTES = int(os.getenv("MAX_DOCX_FILE_SIZE_MB", "50")) * 1024 * 1024
+
+
+def extract_text_pdf_pages(file_path: str, start_page: int, end_page: int) -> str:
+    """Extract text from a specific page range of a PDF using PyMuPDF.
+
+    Used for page-range splitting of large PDFs (>MAX_PAGES_PER_PART pages).
+    Reuses the same fitz logic as extract_text_pdf but for a subset of pages.
+    """
+    text = ""
+    try:
+        with fitz.open(file_path) as doc:
+            for page_num in range(start_page, min(end_page, len(doc))):
+                try:
+                    page_text = doc[page_num].get_text()
+                    if page_text.strip():
+                        text += f"\n{page_text}"
+                except Exception as e:
+                    logger.warning(f"Error extracting page {page_num + 1}: {e}")
+                    continue
+    except Exception as e:
+        logger.error(f"Error opening PDF {file_path}: {e}")
     return text.strip()
 
-def calculate_keyword_scores(text: str) -> Dict[str, float]:
-    """Calculate classification scores based on keyword matching."""
-    text_lower = text.lower()
-    scores = {"confidential": 0.0, "internal": 0.0, "public": 0.0}
-    
-    for classification, patterns in CLASSIFICATION_KEYWORDS.items():
-        for pattern in patterns:
-            matches = re.findall(pattern, text_lower, re.IGNORECASE)
-            # Weight by frequency and pattern specificity
-            score_increment = len(matches) * 0.1
-            scores[classification] += score_increment
-    
-    # Normalize scores
-    max_score = max(scores.values()) if any(scores.values()) else 1.0
-    if max_score > 0:
-        scores = {k: v / max_score for k, v in scores.items()}
-    
-    return scores
 
-def get_text_segments(text: str, max_length: int = 512) -> List[str]:
-    """Split text into overlapping segments for better context analysis."""
-    if len(text) <= max_length:
-        return [text]
-    
-    segments = []
-    overlap = max_length // 4  # 25% overlap
-    
-    for i in range(0, len(text), max_length - overlap):
-        segment = text[i:i + max_length]
-        if segment.strip():
-            segments.append(segment)
-        if i + max_length >= len(text):
-            break
-    
-    return segments
+def extract_large_pdf_chunks(file_path: str, total_pages: int) -> list:
+    """⚠️ REVIEW FIX P1-REVIEW-5: Open the PDF file ONCE and extract all chunks.
 
-def classify_text_enhanced(text: str) -> Tuple[str, float]:
-    """Enhanced text classification with multiple strategies."""
-    if not text.strip():
-        return "unclassified", 0.0
-    
-    # Preprocess text
-    processed_text = preprocess_text(text)
-    if not processed_text:
-        return "unclassified", 0.0
-    
-    # Calculate keyword-based scores
-    keyword_scores = calculate_keyword_scores(processed_text)
-    
-    # Get text segments for ML analysis
-    segments = get_text_segments(processed_text, max_length=512)
-    
-    # ML-based classification on segments
-    candidate_labels = ["confidential", "internal", "public"]
-    ml_scores = {"confidential": 0.0, "internal": 0.0, "public": 0.0}
-    
+    The previous approach called extract_text_pdf_pages() per chunk, opening
+    the PDF N times (O(N) file opens). This version opens once and iterates
+    pages, building chunks in memory."""
+    chunks = []
     try:
-        for segment in segments:  # Analyze all segments
-            result = get_classifier()(segment, candidate_labels)
-            for label, score in zip(result['labels'], result['scores']):
-                ml_scores[label] += score
-        
-        # Average ML scores across segments
-        if segments:
-            ml_scores = {k: v / len(segments) for k, v in ml_scores.items()}
-            
+        with fitz.open(file_path) as doc:
+            chunk_texts = []
+            pages_in_chunk = 0
+            for page_num in range(min(total_pages, len(doc))):
+                # Cost guardrail: limit number of Gemini API calls per document
+                if len(chunks) >= MAX_CHUNKS:
+                    logger.warning(f"Chunk limit ({MAX_CHUNKS}) reached for {file_path}")
+                    break
+                try:
+                    page_text = doc[page_num].get_text()
+                    if page_text.strip():
+                        chunk_texts.append(page_text)
+                except Exception as e:
+                    logger.warning(f"Error extracting page {page_num + 1}: {e}")
+                    continue
+                pages_in_chunk += 1
+                if pages_in_chunk >= MAX_PAGES_PER_PART:
+                    text = "\n".join(chunk_texts)
+                    if text.strip():
+                        chunks.append(text)
+                    chunk_texts = []
+                    pages_in_chunk = 0
+            # Don't forget the last partial chunk
+            if chunk_texts and len(chunks) < MAX_CHUNKS:
+                text = "\n".join(chunk_texts)
+                if text.strip():
+                    chunks.append(text)
     except Exception as e:
-        logger.error(f"Error in ML classification: {e}")
-        # Fallback to keyword-based classification only
-        ml_scores = {"confidential": 0.0, "internal": 0.0, "public": 0.0}
-    
-    # Combine keyword and ML scores with adaptive weights
-    # If keyword scores are strong, give them more weight
-    max_keyword_score = max(keyword_scores.values())
-    if max_keyword_score > 0.5:
-        keyword_weight = 0.6  # Strong keyword signals get more weight
-        ml_weight = 0.4
-    else:
-        keyword_weight = 0.3  # Weak keyword signals, rely more on ML
-        ml_weight = 0.7
-    
-    combined_scores = {}
-    for label in candidate_labels:
-        combined_scores[label] = (
-            keyword_weight * keyword_scores.get(label, 0.0) +
-            ml_weight * ml_scores.get(label, 0.0)
-        )
-    
-    # Apply business logic adjustments
-    # If "company-wide" or "announcement" without "internal" → likely internal
-    text_lower = processed_text.lower()
-    if ("company-wide" in text_lower or "quarterly" in text_lower) and "public" not in text_lower:
-        combined_scores["internal"] += 0.2
-        combined_scores["public"] *= 0.8
-    
-    # If "families" or "open to all" → likely public
-    if "families" in text_lower or "open to all" in text_lower or "everyone" in text_lower:
-        combined_scores["public"] += 0.3
-        combined_scores["internal"] *= 0.7
-    
-    # Determine final classification
-    best_label = max(combined_scores.keys(), key=lambda k: combined_scores[k])
-    best_score = combined_scores[best_label]
-    
-    # Apply confidence thresholds
-    if best_score >= CONFIDENCE_THRESHOLDS["high"]:
-        confidence = best_score
-    elif best_score >= CONFIDENCE_THRESHOLDS["medium"]:
-        confidence = best_score * 0.8  # Reduce confidence for medium scores
-    elif best_score >= CONFIDENCE_THRESHOLDS["low"]:
-        confidence = best_score * 0.6  # Further reduce for low scores
-    else:
-        # Very low confidence, default to unclassified
-        return "unclassified", best_score
-    
-    logger.info(f"Classification: {best_label} (confidence: {confidence:.3f}, keyword: {keyword_scores[best_label]:.3f}, ml: {ml_scores[best_label]:.3f})")
-    
-    return best_label, confidence
+        logger.error(f"Error opening PDF {file_path}: {e}")
+    return chunks
 
-def classify_text(text: str) -> str:
-    """Backward compatibility wrapper for enhanced classification."""
-    classification, confidence = classify_text_enhanced(text)
-    return classification
 
-def classify_document(file_path: str) -> str:
-    """Enhanced document classification pipeline."""
+def get_pdf_page_count(file_path: str) -> int:
+    """Get total page count of a PDF."""
     try:
-        # Extract text
-        text = extract_text_from_file(file_path)
+        with fitz.open(file_path) as doc:
+            return len(doc)
+    except Exception:
+        return 0
+
+
+# ============================================
+# Async extraction & classification (Vertex AI pipeline)
+# ============================================
+
+async def extract_document_text_async(file_path: str) -> Union[str, List[str]]:
+    """Extract text from a document — native async function.
+
+    Called by the background pipeline AFTER setting 'extracting_text' status.
+    Returns either a single string (small docs) or a list of strings (large PDF chunks).
+    The pipeline then passes this to classify_extracted_text_async().
+
+    For large PDFs (>MAX_PAGES_PER_PART pages), extracts text in page-range
+    chunks using PyMuPDF. No temp files or file-level splitting.
+    """
+    try:
+        ext = os.path.splitext(file_path)[1].lower()
+
+        # For PDFs, check if page-range splitting is needed
+        if ext == '.pdf':
+            total_pages = await asyncio.to_thread(get_pdf_page_count, file_path)
+
+            # Cost guardrail: reject unreasonably large PDFs
+            if total_pages > MAX_TOTAL_PAGES:
+                raise ValueError(
+                    f"PDF has {total_pages} pages (max {MAX_TOTAL_PAGES}). "
+                    f"Reduce page count or increase PDF_MAX_TOTAL_PAGES env var."
+                )
+
+            if total_pages > MAX_PAGES_PER_PART:
+                # Large PDF: extract text in page-range chunks (single file open)
+                logger.info(f"Large PDF ({total_pages} pages), splitting into chunks of {MAX_PAGES_PER_PART}")
+                chunks = await asyncio.to_thread(extract_large_pdf_chunks, file_path, total_pages)
+                return chunks if chunks else ""
+
+        # ⚠️ REVIEW FIX P1-REVIEW-8 (DOCX MEMORY GUARD): python-docx loads entire
+        # DOCX into memory (DOM model). Check file size before extraction.
+        if ext == '.docx':
+            file_size = os.path.getsize(file_path)
+            if file_size > MAX_DOCX_FILE_SIZE_BYTES:
+                raise ValueError(
+                    f"DOCX file too large ({file_size / (1024*1024):.0f}MB, max "
+                    f"{MAX_DOCX_FILE_SIZE_BYTES / (1024*1024):.0f}MB). "
+                    f"Convert to PDF for large documents."
+                )
+
+        # Standard path: extract all text at once (small PDFs, DOCX, TXT)
+        text = await asyncio.to_thread(extract_text_from_file, file_path)
         logger.info(f"Extracted text length: {len(text)} for {os.path.basename(file_path)}")
-        if len(text) > 0:
-            logger.info(f"First 200 chars: {text[:200]}")
-        if not text:
-            logger.warning(f"No text extracted from {file_path}")
-            return "unclassified"
-        
-        # Classify
-        classification, confidence = classify_text_enhanced(text)
-        
-        logger.info(f"Document {os.path.basename(file_path)} classified as '{classification}' with confidence {confidence:.3f}")
-        
-        return classification
-        
+        return text
+
+    except ValueError:
+        # Re-raise ValueError (cost guardrail) so pipeline sets 'failed' status
+        raise
     except Exception as e:
-        logger.error(f"Error classifying document {file_path}: {e}")
-        return "unclassified"
+        logger.error(f"Error extracting text from {file_path}: {e}")
+        return ""
+
+
+async def classify_extracted_text_async(text_or_chunks: Union[str, List[str]], file_path: str) -> str:
+    """Classify extracted text via Gemini — native async function.
+
+    Called by the background pipeline AFTER setting 'classifying' status.
+    Accepts either a single string or a list of chunk strings (from large PDFs).
+    For chunks, classifies each independently and takes the highest-security label.
+
+    Exceptions from classify_text_with_gemini (API failures, auth errors) are NOT
+    caught here — they propagate to the pipeline's except block, which sets
+    classification_status = 'failed' with the error message.
+
+    ⚠️ OVER-CLASSIFICATION NOTE: For chunked documents, the highest-security label
+    from ANY chunk wins (single-chunk veto). This is intentional (err on security).
+    Per-chunk results are logged at INFO level for admin review.
+    """
+    if isinstance(text_or_chunks, list):
+        # Multiple chunks from a large PDF
+        best_label = "unclassified"
+        best_confidence = 0.0
+
+        for i, chunk_text in enumerate(text_or_chunks):
+            # ⚠️ REVIEW FIX P2-REVIEW-11: Per-chunk char limit.
+            if len(chunk_text) > MAX_TEXT_CHARS:
+                logger.warning(
+                    f"Chunk {i+1}/{len(text_or_chunks)} exceeds {MAX_TEXT_CHARS} chars "
+                    f"({len(chunk_text)} chars). Truncating."
+                )
+                chunk_text = chunk_text[:MAX_TEXT_CHARS]
+            label, confidence = await classify_text_with_gemini(chunk_text)
+            logger.info(f"Chunk {i+1}/{len(text_or_chunks)} → '{label}' (confidence={confidence:.3f})")
+
+            if SECURITY_RANK.get(label, 0) > SECURITY_RANK.get(best_label, 0):
+                best_label = label
+                best_confidence = confidence
+
+        logger.info(f"Document {os.path.basename(file_path)} → '{best_label}' (confidence={best_confidence:.3f})")
+        return best_label
+    else:
+        # Single text string
+        if not text_or_chunks:
+            logger.warning(f"No text to classify for {file_path}")
+            return "unclassified"
+
+        # P1-7 FIX: Token limit guard for non-PDF files (DOCX, TXT).
+        if len(text_or_chunks) > MAX_TEXT_CHARS:
+            logger.warning(
+                f"Text for {os.path.basename(file_path)} exceeds {MAX_TEXT_CHARS} chars "
+                f"({len(text_or_chunks)} chars). Truncating to fit Gemini token limit."
+            )
+            text_or_chunks = text_or_chunks[:MAX_TEXT_CHARS]
+
+        label, confidence = await classify_text_with_gemini(text_or_chunks)
+        logger.info(f"Document {os.path.basename(file_path)} → '{label}' (confidence={confidence:.3f})")
+        return label

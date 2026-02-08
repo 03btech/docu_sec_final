@@ -178,6 +178,19 @@ npm-debug.log*
 test_*.py
 debug_*.py
 
+# ============ GCP CREDENTIALS ============
+credentials/
+**/gcp-service-account*.json
+
+# ============ NEGATION RULES ============
+# Re-include files blocked by earlier rules (*.md, .github, test_*.py)
+!.github/
+!.github/**
+!*.env.example
+!README.md
+!backend/README.md
+!test_*.py
+
 # Keep these specific files
 !README.md
 !LICENSE.md

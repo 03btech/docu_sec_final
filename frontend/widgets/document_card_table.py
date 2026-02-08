@@ -12,7 +12,14 @@ import qtawesome as qta
 
 
 class ClassificationBadge(QWidget):
-    """Custom widget for classification badges with color coding"""
+    """Custom widget for classification badges with color coding.
+    
+    Handles classification_status from the async classification pipeline:
+    - queued/extracting_text/classifying → "Classifying..." dimmed badge
+    - failed → "Failed" red badge with tooltip from classification_error
+    - completed + unclassified → "Needs Review" amber badge
+    - completed → normal classification badge
+    """
     
     CLASSIFICATION_COLORS = {
         'public': ('#10b981', '#d1fae5'),      # Green
@@ -20,25 +27,32 @@ class ClassificationBadge(QWidget):
         'confidential': ('#ef4444', '#fee2e2'), # Red
         'unclassified': ('#6b7280', '#f3f4f6')  # Gray
     }
+
+    # Status colors for non-completed classification states
+    STATUS_COLORS = {
+        'classifying': ('#6b7280', '#f3f4f6'),    # Gray dimmed
+        'failed': ('#dc2626', '#fef2f2'),          # Red
+        'needs_review': ('#d97706', '#fffbeb'),    # Amber
+    }
     
-    def __init__(self, classification: str, parent=None):
+    def __init__(self, classification: str, classification_status: str = 'completed',
+                 classification_error: str = '', parent=None):
         super().__init__(parent)
         self.classification = classification.lower()
+        self.classification_status = classification_status or 'completed'
+        self.classification_error = classification_error or ''
         self.setMinimumHeight(40)  # Ensure minimum height
         self.setup_ui()
     
     def setup_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)  # No padding
-        
-        # Get colors for classification
-        text_color, bg_color = self.CLASSIFICATION_COLORS.get(
-            self.classification, 
-            self.CLASSIFICATION_COLORS['unclassified']
-        )
+
+        # Determine badge text and colors based on classification_status
+        badge_text, text_color, bg_color, tooltip = self._resolve_badge()
         
         # Create badge label
-        badge = QLabel(self.classification.upper())
+        badge = QLabel(badge_text)
         badge.setMinimumHeight(24)  # Ensure minimum height for badge
         badge.setStyleSheet(f"""
             QLabel {{
@@ -50,9 +64,42 @@ class ClassificationBadge(QWidget):
                 font-weight: bold;
             }}
         """)
+        if tooltip:
+            badge.setToolTip(tooltip)
         
         layout.addWidget(badge)
         layout.addStretch()
+
+    def _resolve_badge(self) -> tuple:
+        """Resolve badge text, colors, and tooltip based on classification status.
+        
+        Returns:
+            (badge_text, text_color, bg_color, tooltip)
+        """
+        status = self.classification_status
+
+        # In-progress states: queued, extracting_text, classifying
+        if status in ('queued', 'extracting_text', 'classifying'):
+            text_color, bg_color = self.STATUS_COLORS['classifying']
+            return ('CLASSIFYING...', text_color, bg_color, 'Classification in progress')
+
+        # Failed state
+        if status == 'failed':
+            text_color, bg_color = self.STATUS_COLORS['failed']
+            tooltip = self.classification_error if self.classification_error else 'Classification failed'
+            return ('FAILED', text_color, bg_color, tooltip)
+
+        # Completed but unclassified → needs review
+        if status == 'completed' and self.classification == 'unclassified':
+            text_color, bg_color = self.STATUS_COLORS['needs_review']
+            return ('NEEDS REVIEW', text_color, bg_color, 'Classification completed but result is unclassified')
+
+        # Normal completed state
+        text_color, bg_color = self.CLASSIFICATION_COLORS.get(
+            self.classification,
+            self.CLASSIFICATION_COLORS['unclassified']
+        )
+        return (self.classification.upper(), text_color, bg_color, '')
 
 
 class ActionMenuButton(QPushButton):
@@ -265,9 +312,13 @@ class ModernDocumentTable(QTableWidget):
             doc_widget = self._create_document_cell(doc)
             self.setCellWidget(row, 0, doc_widget)
             
-            # Column 1: Classification badge
+            # Column 1: Classification badge (status-aware)
             classification = doc.get('classification', 'unclassified')
-            badge_widget = ClassificationBadge(classification)
+            classification_status = doc.get('classification_status', 'completed')
+            classification_error = doc.get('classification_error', '')
+            badge_widget = ClassificationBadge(
+                classification, classification_status, classification_error
+            )
             self.setCellWidget(row, 1, badge_widget)
             
             # Column 2: Owner
@@ -323,9 +374,13 @@ class ModernDocumentTable(QTableWidget):
             doc_widget = self._create_document_cell(doc)
             self.setCellWidget(row, 0, doc_widget)
             
-            # Column 1: Classification badge
+            # Column 1: Classification badge (status-aware)
             classification = doc.get('classification', 'unclassified')
-            badge_widget = ClassificationBadge(classification)
+            classification_status = doc.get('classification_status', 'completed')
+            classification_error = doc.get('classification_error', '')
+            badge_widget = ClassificationBadge(
+                classification, classification_status, classification_error
+            )
             self.setCellWidget(row, 1, badge_widget)
             
             # Column 2: Owner

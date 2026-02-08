@@ -26,7 +26,27 @@ class DocumentTable(QTableWidget):
         for row, doc in enumerate(documents):
             # Skip ID column - start from filename
             self.setItem(row, 0, QTableWidgetItem(doc.get('filename', '')))
-            self.setItem(row, 1, QTableWidgetItem(doc.get('classification', '')))
+
+            # Classification column - status-aware display
+            classification = doc.get('classification', '')
+            classification_status = doc.get('classification_status', 'completed')
+            classification_error = doc.get('classification_error', '')
+
+            if classification_status in ('queued', 'extracting_text', 'classifying'):
+                class_item = QTableWidgetItem('Classifying...')
+                class_item.setForeground(Qt.GlobalColor.gray)
+                class_item.setToolTip('Classification in progress')
+            elif classification_status == 'failed':
+                class_item = QTableWidgetItem('Failed')
+                class_item.setForeground(Qt.GlobalColor.red)
+                class_item.setToolTip(classification_error or 'Classification failed')
+            elif classification_status == 'completed' and classification.lower() == 'unclassified':
+                class_item = QTableWidgetItem('Needs Review')
+                class_item.setForeground(Qt.GlobalColor.darkYellow)
+                class_item.setToolTip('Classification completed but result is unclassified')
+            else:
+                class_item = QTableWidgetItem(classification)
+            self.setItem(row, 1, class_item)
             
             owner = doc.get('owner')
             print(f"DEBUG Table: Row {row}, owner = {owner}, type = {type(owner)}")

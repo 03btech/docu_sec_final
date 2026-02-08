@@ -10,6 +10,16 @@ class ClassificationLevel(enum.Enum):
     confidential = "confidential"
     unclassified = "unclassified"
 
+# ⚠️ SYNC: Enum values and ORDER must match the CREATE TYPE classificationstatus
+# statement in main.py lifespan handler. PostgreSQL enum ordering matters for
+# comparisons (<, >). If you add/reorder values here, update the SQL to match.
+class ClassificationStatus(enum.Enum):
+    queued = "queued"
+    extracting_text = "extracting_text"   # Text extraction from file
+    classifying = "classifying"           # Gemini API call in progress
+    completed = "completed"               # Classification done
+    failed = "failed"                     # All retries exhausted
+
 class PermissionLevel(enum.Enum):
     view = "view"
     edit = "edit"
@@ -54,6 +64,11 @@ class Document(Base):
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     upload_date = Column(TIMESTAMP(timezone=True), server_default=func.now())
     classification = Column(Enum(ClassificationLevel), default=ClassificationLevel.unclassified)
+    classification_status = Column(Enum(ClassificationStatus), default=ClassificationStatus.queued)
+    classification_error = Column(String(500), nullable=True)
+    # ⚠️ P1-REVIEW-6: Timestamp for accurate stale detection.
+    # Set to NOW() when the pipeline starts, not at upload time.
+    classification_queued_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
     owner = relationship("User", back_populates="documents")
     document_permissions = relationship("DocumentPermission", back_populates="document", cascade="all, delete-orphan")

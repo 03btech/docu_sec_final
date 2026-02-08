@@ -73,37 +73,93 @@ if ($Clean) {
 
 # Check for .env file in backend
 Write-Step "Checking environment configuration..."
+$envExamplePath = "backend\.env.example"
 $envPath = "backend\.env"
 
+# Ensure .env.example exists
+if (-not (Test-Path $envExamplePath)) {
+    Write-Error-Custom ".env.example not found in backend directory!"
+    exit 1
+}
+
+# Create .env from template if it doesn't exist
 if (-not (Test-Path $envPath)) {
-    Write-Info ".env file not found. Creating default configuration..."
-    
-    # Generate random secret key
-    $secretKey = -join ((65..90) + (97..122) + (48..57) | Get-Random -Count 32 | ForEach-Object { [char]$_ })
-    
-    $envContent = @"
-# Database Configuration
-DATABASE_URL=postgresql+asyncpg://docusec_user:infosysyrab@db:5432/docu_security_db
+    Write-Info ".env file not found. Creating from template..."
 
-# Security
-SECRET_KEY=$secretKey
+    # Generate cryptographically secure SECRET_KEY
+    try {
+        $secretKey = python -c "import secrets; print(secrets.token_urlsafe(32))" 2>$null
+        if ($LASTEXITCODE -ne 0) { throw "python not found" }
+    } catch {
+        # Fallback: PowerShell-native cryptographic random generation
+        $bytes = New-Object byte[] 32
+        $rng = [System.Security.Cryptography.RNGCryptoServiceProvider]::new()
+        $rng.GetBytes($bytes)
+        $secretKey = [Convert]::ToBase64String($bytes) -replace '[+/=]', ''
+        $secretKey = $secretKey.Substring(0, [Math]::Min(32, $secretKey.Length))
+        $rng.Dispose()
+        Write-Info "Generated SECRET_KEY using PowerShell cryptographic RNG"
+    }
 
-# Application Settings
-ENVIRONMENT=production
-DEBUG=false
+    # Read .env.example as template
+    $envContent = Get-Content $envExamplePath -Raw
 
-# Database Credentials (for PostgreSQL container)
-POSTGRES_DB=docu_security_db
-POSTGRES_USER=docusec_user
-POSTGRES_PASSWORD=infosysyrab
-"@
-    
-    Set-Content -Path $envPath -Value $envContent
-    Write-Success "Created .env file with auto-generated SECRET_KEY"
-    Write-Info "Default password: infosysyrab (change in backend\.env)"
+    # Replace only the SECRET_KEY placeholder
+    $envContent = $envContent -replace "your-random-32-char-key-here", $secretKey
+
+    # Write to .env
+    Set-Content -Path $envPath -Value $envContent -Encoding UTF8
+    Write-Success "Created backend\.env from template with auto-generated SECRET_KEY"
+
+    # Validate that placeholder passwords have been changed
+    if ($envContent -match "CHANGE_ME_BEFORE_DEPLOY") {
+        Write-Host "  [WARNING] backend\.env still contains placeholder passwords!" -ForegroundColor Yellow
+        Write-Info "   Edit backend\.env and replace CHANGE_ME_BEFORE_DEPLOY with real passwords:"
+        Write-Info "   - POSTGRES_PASSWORD=<your-secure-password>"
+        Write-Info "   - DATABASE_URL=postgresql+asyncpg://docusec_user:<your-secure-password>@db:5432/docu_security_db"
+    }
+
+    Write-Info "UPDATE backend\.env with your actual Google Cloud Project ID before running:"
+    Write-Info "   - GOOGLE_CLOUD_PROJECT_ID=your-actual-project-id"
+    Write-Info "   - GOOGLE_CLOUD_REGION=us-central1"
 }
 else {
-    Write-Success "Found .env configuration"
+    Write-Success "Found backend\.env configuration"
+
+    # Validate required variables are present
+    $envContent = Get-Content $envPath -Raw
+    $requiredVars = @("GOOGLE_CLOUD_PROJECT_ID", "GOOGLE_CLOUD_REGION", "DATABASE_URL", "SECRET_KEY")
+
+    $missingVars = @()
+    foreach ($var in $requiredVars) {
+        if ($envContent -notmatch "$var\s*=") {
+            $missingVars += $var
+        }
+    }
+
+    if ($missingVars.Count -gt 0) {
+        Write-Host "  [WARNING] Missing variables in backend\.env: $($missingVars -join ', ')" -ForegroundColor Yellow
+        Write-Info "Update backend\.env.example and delete backend\.env to regenerate"
+    }
+
+    # Reject placeholder passwords in existing .env
+    if ($envContent -match "CHANGE_ME_BEFORE_DEPLOY") {
+        Write-Error-Custom "backend\.env still contains placeholder passwords (CHANGE_ME_BEFORE_DEPLOY)!"
+        Write-Info "Edit backend\.env and set real database passwords before deploying."
+        exit 1
+    }
+}
+
+# Validate credentials folder
+$credPath = Join-Path (Split-Path $PSScriptRoot) "credentials\gcp-service-account.json"
+if (-not (Test-Path "../credentials/gcp-service-account.json")) {
+    Write-Host "  [WARNING] GCP credentials not found!" -ForegroundColor Yellow
+    Write-Info "Download your Google service account JSON key and place it in:"
+    Write-Info "  c:\Users\bhary\OneDrive\Desktop\docusec_final\credentials\gcp-service-account.json"
+    Write-Info "Continuing without credentials (classification will fail at runtime)..."
+}
+else {
+    Write-Success "Found GCP service account credentials"
 }
 
 # Build and start containers
@@ -161,7 +217,7 @@ Write-Host "  Checking backend..." -NoNewline
 $backendHealthy = $false
 for ($i = 1; $i -le 15; $i++) {
     try {
-        $response = Invoke-WebRequest -Uri "http://localhost:8000/" -TimeoutSec 3 -UseBasicParsing 2>$null
+        $response = Invoke-WebRequest -Uri "http://localhost:8000/health" -TimeoutSec 3 -UseBasicParsing 2>$null
         if ($response.StatusCode -eq 200) {
             $backendHealthy = $true
             break

@@ -1,18 +1,17 @@
 # Core Server & Sessions
 fastapi[all]
-starlette-session
-itsdangerous
+slowapi
+python-dotenv
 
 # Database & Auth
-sqlalchemy
+sqlalchemy>=2.0,<3.0
 asyncpg
-psycopg2-binary
 passlib[bcrypt]
 
-# ML & File Processing
-transformers
-torch
-sentencepiece
+# Google Cloud / Vertex AI
+google-cloud-aiplatform
+
+# File Processing
 python-docx
 PyMuPDF
 python-multipart

@@ -40,8 +40,6 @@ class DetectionWorker(QThread):
         # Detection settings
         self.person_timeout = 3.0  # Seconds without person before blocking
         self.last_person_time = time.time()
-        self.phone_cooldown = 2.0  # Seconds between phone alerts
-        self.last_phone_alert = 0
         
         # YOLO class IDs (COCO dataset)
         self.PERSON_CLASS_ID = 0
@@ -59,8 +57,8 @@ class DetectionWorker(QThread):
         self.phone_confidence = 0.25  # 25% confidence for phone (more sensitive)
         
         # Low lighting detection settings
-        self.brightness_threshold = 200  # Minimum average brightness (0-255)
-        self.low_lighting_detection_threshold = 5  # Consecutive frames before triggering
+        self.brightness_threshold = 50  # Minimum average brightness (0-255) — 50 catches genuinely dark scenes
+        self.low_lighting_detection_threshold = 15  # Consecutive frames before triggering (allows auto-exposure to adjust)
         self.low_lighting_detection_count = 0  # Current consecutive low light frames
         self.low_lighting_active = False  # Track current low lighting state
         
@@ -72,9 +70,9 @@ class DetectionWorker(QThread):
                 self.camera_error.emit("Failed to open camera. Please check if a camera is connected.")
                 return False
             
-            # Set camera properties for better detection
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # Higher resolution for better phone detection
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            # Set camera properties — 640x480 is sufficient since YOLO resizes internally
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
             self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1)  # Enable autofocus if available
             self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1)  # Enable auto exposure
@@ -93,9 +91,9 @@ class DetectionWorker(QThread):
             return False
         
         try:
-            # Load YOLOv8 small model (better accuracy than nano, still fast)
+            # Load YOLOv8 nano model — fastest for real-time webcam detection
             self.detection_status.emit("🔄 Loading YOLOv8 model...")
-            self.model = YOLO('yolov8s.pt')  # Small version for better accuracy
+            self.model = YOLO('yolov8n.pt')  # Nano version for real-time performance
             self.detection_status.emit("✅ YOLOv8 model loaded successfully")
             self.model_initialized.emit(True)
             return True
@@ -121,7 +119,7 @@ class DetectionWorker(QThread):
         self.last_person_time = time.time()
         
         frame_count = 0
-        detection_interval = 3  # Process every 3rd frame for faster detection
+        detection_interval = 2  # Process every 2nd frame for lower latency
         
         while self.running:
             try:
@@ -179,8 +177,11 @@ class DetectionWorker(QThread):
             if not self.check_lighting(frame):
                 return  # Skip detection if low lighting
             
-            # Run YOLOv8 inference with optimized settings
-            results = self.model(frame, verbose=False, conf=0.4, iou=0.5)
+            # Run YOLOv8 inference — use the lowest confidence threshold so per-class
+            # thresholds (person_confidence, phone_confidence) are not silently pre-filtered
+            results = self.model(frame, verbose=False,
+                                 conf=min(self.person_confidence, self.phone_confidence),
+                                 iou=0.5)
             
             person_found = False
             phone_found = False
