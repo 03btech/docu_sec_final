@@ -1,5 +1,13 @@
 import sys
 import ctypes
+
+# IMPORTANT: Import torch BEFORE PyQt6 to avoid DLL conflict on Windows.
+# PyQt6 loads DLLs that interfere with torch's c10.dll initialization.
+try:
+    import torch  # noqa: F401
+except Exception:
+    pass
+
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from api.client import APIClient

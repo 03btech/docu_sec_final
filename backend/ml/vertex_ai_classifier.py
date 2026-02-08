@@ -136,10 +136,18 @@ def parse_gemini_response(response_text: str) -> Tuple[str, float]:
     # Strip markdown code fences if present
     cleaned = response_text.strip()
     if cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[-1]  # Remove first line
+        # Remove ```json or ``` line
+        cleaned = cleaned.split("\n", 1)[-1]
         if cleaned.endswith("```"):
             cleaned = cleaned[:-3]
         cleaned = cleaned.strip()
+
+    # Fallback: extract first JSON object from response text
+    if not cleaned.startswith("{"):
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            cleaned = cleaned[start:end + 1]
 
     try:
         data = json.loads(cleaned)
@@ -189,7 +197,7 @@ async def classify_text_with_gemini(text: str) -> Tuple[str, float]:
         generation_config = GenerationConfig(
             response_mime_type="application/json",
             temperature=0.1,       # Low temp for deterministic classification
-            max_output_tokens=256,  # Response is small JSON
+            max_output_tokens=1024, # Must be large enough for thinking tokens + JSON response
         )
 
         last_error = None

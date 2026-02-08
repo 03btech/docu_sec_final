@@ -11,9 +11,9 @@ import time
 try:
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError, Exception) as e:
     YOLO_AVAILABLE = False
-    print("⚠️ WARNING: ultralytics not installed. YOLOv8 detection will not work.")
+    print(f"⚠️ WARNING: YOLO unavailable ({type(e).__name__}: {e}). Security monitoring disabled.")
 
 
 class DetectionWorker(QThread):

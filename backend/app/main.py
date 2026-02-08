@@ -61,15 +61,22 @@ async def lifespan(app: FastAPI):
         await conn.run_sync(Base.metadata.create_all)
         # Add new columns if they don't exist (idempotent, safe on every startup)
         # ⚠️ SYNC: Enum values must match ClassificationStatus in models.py exactly.
+        # NOTE: asyncpg requires each statement to be executed separately.
         await conn.execute(text("""
             DO $$ BEGIN
                 CREATE TYPE classificationstatus AS ENUM ('queued','extracting_text','classifying','completed','failed');
             EXCEPTION WHEN duplicate_object THEN null;
             END $$;
-            ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_status classificationstatus DEFAULT 'queued';
-            ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_error VARCHAR(500);
-            ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_queued_at TIMESTAMPTZ;
         """))
+        await conn.execute(text(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_status classificationstatus DEFAULT 'queued';"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_error VARCHAR(500);"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_queued_at TIMESTAMPTZ;"
+        ))
 
         # P2-REVIEW-16: Index on classification_status for admin retry / stale recovery queries
         await conn.execute(text("""
