@@ -60,6 +60,7 @@ class SecureDocumentViewer(QDialog):
         self._low_lighting_active = False
         self._phone_check_timer = None
         self._low_lighting_timer = None
+        self._first_detection_received = False  # Track if AI detection has verified at least once
         
         self.setWindowTitle(f"🔒 Secure View - {self.filename}")
         self.setMinimumSize(900, 700)
@@ -231,6 +232,19 @@ class SecureDocumentViewer(QDialog):
         """Handle person detection status."""
         self.person_present = person_present
         
+        # Mark that we've received at least one detection result from the AI model
+        if not self._first_detection_received:
+            self._first_detection_received = True
+            self._log_security_event_async(
+                activity_type="ai_detection_verified",
+                metadata={
+                    "document_id": self.document_data.get('id'),
+                    "document_name": self.filename,
+                    "classification": self.classification,
+                    "person_present": person_present
+                }
+            )
+        
         # Don't hide overlay if phone alert or low lighting is active - they take priority
         if self._phone_alert_active or self._low_lighting_active:
             return
@@ -388,6 +402,11 @@ class SecureDocumentViewer(QDialog):
             
             # Now load and display the document
             self.load_document()
+            
+            # SECURITY: Show overlay immediately to block document until first
+            # AI detection verifies person presence. This closes the gap between
+            # document render and the first detection frame being processed.
+            self.security_overlay.show_verifying_presence_block()
             
             # Create watermark overlay now that window is properly shown
             if self.classification.lower() == 'confidential' and not self.watermark_overlay:

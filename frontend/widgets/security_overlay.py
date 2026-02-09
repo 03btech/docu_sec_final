@@ -80,6 +80,22 @@ class SecurityBlockOverlay(QWidget):
         self.notice_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.notice_label)
     
+    def show_verifying_presence_block(self):
+        """Show overlay while AI detection is initializing its first scan.
+        
+        This blocks the document from being visible during the gap between
+        model initialization completing and the first detection frame result.
+        """
+        self.message_label.setText("🔍 VERIFYING PRESENCE")
+        self.message_label.setStyleSheet("font-size: 48px; padding: 20px; color: #17a2b8; background-color: transparent;")
+        self.details_label.setText("AI security detection is verifying your presence...")
+        self.status_label.setText("Please remain in front of the camera")
+        self.notice_label.setText("⏳ Document will be revealed once presence is confirmed")
+        self.setGeometry(self.parent().rect())
+        self.show()
+        self.raise_()
+        self.update()  # Force repaint
+    
     def show_person_missing_block(self):
         """Show overlay when no person is detected."""
         self.message_label.setText("⚠️ NO PERSON DETECTED")
