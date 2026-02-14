@@ -194,18 +194,41 @@ class APIClient:
             return response.json()
         return None
 
-    def log_security_event(self, activity_type: str, metadata: Optional[Dict[str, Any]] = None) -> bool:
-        """Log a security event (e.g., phone detection, unauthorized access)."""
+    def log_security_event(self, activity_type: str, metadata: Optional[Dict[str, Any]] = None,
+                           image_data: Optional[str] = None) -> bool:
+        """Log a security event with optional camera capture image."""
         data = {
             "activity_type": activity_type,
             "metadata": metadata or {}
         }
+        if image_data:
+            data["image_data"] = image_data
         try:
             response = self.session.post(f"{self.base_url}/security/log", json=data)
             return response.status_code == 200
         except Exception as e:
             print(f"Failed to log security event: {e}")
             return False
+    
+    def get_security_log_image(self, log_id: int) -> Optional[str]:
+        """Retrieve the captured camera image for a specific security log."""
+        try:
+            print(f"[API] get_security_log_image: requesting /security/logs/{log_id}/image ...")
+            response = self.session.get(
+                f"{self.base_url}/security/logs/{log_id}/image",
+                timeout=15  # Base64 images can be large, allow generous timeout
+            )
+            print(f"[API] get_security_log_image: status={response.status_code}, content_length={len(response.content)}")
+            if response.status_code == 200:
+                data = response.json()
+                img = data.get("image_data")
+                print(f"[API] get_security_log_image: image_data is {'None' if img is None else f'{len(img)} chars'}")
+                return img
+            else:
+                print(f"[API] get_security_log_image: non-200 response: {response.text[:200]}")
+        except Exception as e:
+            print(f"[API] get_security_log_image: EXCEPTION {type(e).__name__}: {e}")
+        return None
     
     def is_admin(self) -> bool:
         """Check if current user has admin role."""

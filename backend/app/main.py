@@ -115,6 +115,11 @@ async def lifespan(app: FastAPI):
               AND access_logs.document_name IS NULL;
         """))
 
+        # Security logs: add image_data column for camera capture evidence
+        await conn.execute(text(
+            "ALTER TABLE security_logs ADD COLUMN IF NOT EXISTS image_data TEXT;"
+        ))
+
     # Verify Vertex AI credentials on startup (fail-fast for misconfigurations)
     # P2-15 FIX: Synchronous call — lifespan blocks requests until yield anyway
     try:

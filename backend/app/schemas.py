@@ -151,10 +151,24 @@ class SecurityLogBase(BaseModel):
 
 class SecurityLogCreate(SecurityLogBase):
     metadata: Optional[dict] = None
+    image_data: Optional[str] = None  # Base64-encoded camera capture
 
-class SecurityLog(SecurityLogBase):
+class SecurityLogSummary(SecurityLogBase):
+    """List response — excludes image_data to keep payloads small."""
     id: int
     timestamp: datetime
+    has_image: bool = False
+    user: Optional['User'] = None
+
+    class Config:
+        from_attributes = True
+
+class SecurityLog(SecurityLogBase):
+    """Full response — includes image_data for single-log retrieval."""
+    id: int
+    timestamp: datetime
+    image_data: Optional[str] = None
+    has_image: bool = False
     user: Optional['User'] = None
 
     class Config:

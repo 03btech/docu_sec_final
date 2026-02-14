@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from datetime import datetime
 import time
+import base64
 
 try:
     from ultralytics import YOLO
@@ -229,11 +230,14 @@ class DetectionWorker(QThread):
                 # Trigger alert ONLY ONCE after threshold reached
                 if self.phone_detection_count >= self.phone_detection_threshold and not self.phone_alert_emitted:
                     self.phone_alert_emitted = True  # Mark as emitted
+                    # Capture the current frame as evidence
+                    frame_b64 = self._capture_frame_as_base64(frame)
                     detection_data = {
                         'timestamp': datetime.now().isoformat(),
                         'confidence': phone_confidence,
                         'type': 'cell_phone',
-                        'consecutive_frames': self.phone_detection_count
+                        'consecutive_frames': self.phone_detection_count,
+                        'image_data': frame_b64
                     }
                     self.phone_detected.emit(detection_data)
                     self.detection_status.emit(f"🚨 PHONE DETECTED ({phone_confidence:.0%} confidence) - Security alert!")
@@ -248,6 +252,18 @@ class DetectionWorker(QThread):
                 
         except Exception as e:
             print(f"Error processing frame: {e}")
+    
+    def _capture_frame_as_base64(self, frame) -> str:
+        """Encode the current webcam frame as a base64 JPEG string for storage."""
+        try:
+            # Encode frame as JPEG with moderate quality to keep payload reasonable
+            encode_params = [cv2.IMWRITE_JPEG_QUALITY, 70]
+            success, buffer = cv2.imencode('.jpg', frame, encode_params)
+            if success:
+                return base64.b64encode(buffer).decode('utf-8')
+        except Exception as e:
+            print(f"Error capturing frame as base64: {e}")
+        return None
     
     def stop(self):
         """Stop the detection worker."""

@@ -5,12 +5,14 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QTableWidgetItem, QLabel, QPushButton, QHeaderView,
                              QMessageBox, QComboBox, QLineEdit, QFrame, QScrollArea,
                              QTextEdit)
-from PyQt6.QtCore import Qt, QTimer, QSize
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import Qt, QTimer, QSize, QByteArray, pyqtSignal
+from PyQt6.QtGui import QColor, QPixmap, QImage
 import qtawesome as qta
 from api.client import APIClient
 from datetime import datetime
 import json
+import base64
+import threading
 
 # ── Activity type display mapping ──
 _ACTIVITY_STYLE: dict[str, tuple[str, str, str, str]] = {
@@ -21,6 +23,8 @@ _ACTIVITY_STYLE: dict[str, tuple[str, str, str, str]] = {
     "viewer_closed_low_lighting":       ("fa5s.door-open",      "#9f1239", "#ffe4e6", "Closed — Low Light"),
     "viewer_closed_phone_detection":    ("fa5s.door-open",      "#dc2626", "#fee2e2", "Closed — Phone"),
     "screen_capture_protection_enabled":("fa5s.shield-alt",     "#16a34a", "#dcfce7", "Screen Protection"),
+    "ai_detection_verified":            ("fa5s.check-circle",   "#059669", "#d1fae5", "AI Verified"),
+    "screenshot_attempt":               ("fa5s.camera",         "#dc2626", "#fee2e2", "Screenshot Attempt"),
 }
 
 def _display_label(activity_type: str) -> str:
@@ -31,11 +35,16 @@ def _display_label(activity_type: str) -> str:
 
 
 class SecurityLogsView(QWidget):
+    # Signal to deliver image data from background thread to main thread
+    _image_ready = pyqtSignal(object)  # Emits str or None
+
     def __init__(self, api_client: APIClient):
         super().__init__()
         self.api_client = api_client
         self.logs: list[dict] = []
         self.filtered_logs: list[dict] = []
+        # Connect the cross-thread signal to the UI update slot
+        self._image_ready.connect(self._display_capture_image)
         self.setup_ui()
 
     def setup_ui(self):
@@ -197,7 +206,51 @@ class SecurityLogsView(QWidget):
         dc_title.setStyleSheet("font-size: 14px; font-weight: 600; color: #1f2937; border: none;")
         dc_header.addWidget(dc_title)
         dc_header.addStretch()
+        
+        # View Image button (only shown when image is available)
+        self.view_image_btn = QPushButton("  View Capture")
+        self.view_image_btn.setIcon(qta.icon('fa5s.camera', color='white'))
+        self.view_image_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.view_image_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #8b5cf6; color: white; border: none;
+                border-radius: 8px; padding: 6px 14px; font-size: 12px; font-weight: 500;
+            }
+            QPushButton:hover { background-color: #7c3aed; }
+        """)
+        self.view_image_btn.clicked.connect(self._show_capture_image)
+        self.view_image_btn.setVisible(False)
+        dc_header.addWidget(self.view_image_btn)
+
+        # Close details button
+        close_details_btn = QPushButton()
+        close_details_btn.setIcon(qta.icon('fa5s.times', color='#6b7280'))
+        close_details_btn.setFixedSize(28, 28)
+        close_details_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_details_btn.setToolTip("Close details")
+        close_details_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f3f4f6; border: none; border-radius: 14px;
+            }
+            QPushButton:hover { background-color: #fee2e2; }
+        """)
+        close_details_btn.clicked.connect(self._close_details)
+        dc_header.addWidget(close_details_btn)
+        
         dc_layout.addLayout(dc_header)
+
+        # Image display area (hidden by default)
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.image_label.setStyleSheet("""
+            QLabel {
+                background: #1f2937; border: 1px solid #e5e7eb; border-radius: 8px;
+                padding: 8px;
+            }
+        """)
+        self.image_label.setFixedHeight(200)
+        self.image_label.setVisible(False)
+        dc_layout.addWidget(self.image_label)
 
         self.details_text = QTextEdit()
         self.details_text.setReadOnly(True)
@@ -365,6 +418,9 @@ class SecurityLogsView(QWidget):
                 except Exception:
                     details = {}
             summary = self._details_summary(details, at)
+            # Add camera icon if log has a captured image
+            if log.get('has_image', False):
+                summary = f"📷 {summary}"
             detail_item = QTableWidgetItem(summary)
             detail_item.setForeground(QColor('#6b7280'))
             self.table.setItem(row, 2, detail_item)
@@ -412,12 +468,89 @@ class SecurityLogsView(QWidget):
             except Exception:
                 details = {}
 
-        if details:
-            pretty = json.dumps(details, indent=2, default=str)
+        # Show/hide image button based on has_image flag
+        has_image = log.get('has_image', False)
+        self.view_image_btn.setVisible(has_image)
+        self.image_label.setVisible(False)  # Hide image until explicitly requested
+        self._current_log_id = log.get('id')
+
+        if details or has_image:
+            pretty = json.dumps(details, indent=2, default=str) if details else "No metadata"
             self.details_text.setPlainText(pretty)
             self.details_card.setVisible(True)
         else:
             self.details_card.setVisible(False)
+    
+    def _close_details(self):
+        """Hide the details card and clear selection."""
+        self.details_card.setVisible(False)
+        self.image_label.setVisible(False)
+        self.table.clearSelection()
+    
+    def _show_capture_image(self):
+        """Fetch and display the captured camera image for the selected log."""
+        log_id = getattr(self, '_current_log_id', None)
+        print(f"[ViewCapture] Button clicked. log_id={log_id}")
+        if not log_id:
+            print("[ViewCapture] No log_id found, aborting.")
+            return
+        
+        self.view_image_btn.setText("  Loading...")
+        self.view_image_btn.setEnabled(False)
+        
+        def fetch_image():
+            print(f"[ViewCapture] Background thread started. Fetching image for log_id={log_id}...")
+            try:
+                image_b64 = self.api_client.get_security_log_image(log_id)
+                print(f"[ViewCapture] API returned. image_b64 is {'None' if image_b64 is None else f'{len(image_b64)} chars'}")
+            except Exception as e:
+                print(f"[ViewCapture] ERROR fetching image: {type(e).__name__}: {e}")
+                image_b64 = None
+            # Use pyqtSignal (thread-safe) instead of QTimer.singleShot (unreliable from bg thread)
+            print(f"[ViewCapture] Emitting _image_ready signal...")
+            self._image_ready.emit(image_b64)
+            print(f"[ViewCapture] Signal emitted. Background thread done.")
+        
+        threading.Thread(target=fetch_image, daemon=True).start()
+        print(f"[ViewCapture] Background thread launched.")
+    
+    def _display_capture_image(self, image_b64=None):
+        """Display the base64-encoded image in the details card."""
+        print(f"[ViewCapture] _display_capture_image called. image_b64 is {'None' if image_b64 is None else f'{len(image_b64)} chars'}")
+        self.view_image_btn.setText("  View Capture")
+        self.view_image_btn.setEnabled(True)
+        
+        if not image_b64:
+            print("[ViewCapture] No image data — showing 'Failed to load image'.")
+            self.image_label.setText("Failed to load image")
+            self.image_label.setVisible(True)
+            return
+        
+        try:
+            image_bytes = base64.b64decode(image_b64)
+            print(f"[ViewCapture] Decoded {len(image_bytes)} bytes from base64.")
+            pixmap = QPixmap()
+            pixmap.loadFromData(QByteArray(image_bytes))
+            
+            if not pixmap.isNull():
+                # Scale to fit the label while maintaining aspect ratio
+                scaled = pixmap.scaled(
+                    self.image_label.width() - 16, 
+                    self.image_label.height() - 16,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self.image_label.setPixmap(scaled)
+                self.image_label.setVisible(True)
+                print(f"[ViewCapture] Image displayed successfully ({scaled.width()}x{scaled.height()}).")
+            else:
+                print("[ViewCapture] QPixmap is null — invalid image data.")
+                self.image_label.setText("Invalid image data")
+                self.image_label.setVisible(True)
+        except Exception as e:
+            print(f"[ViewCapture] ERROR displaying image: {type(e).__name__}: {e}")
+            self.image_label.setText(f"Error: {e}")
+            self.image_label.setVisible(True)
 
     # ── Lifecycle ──
 

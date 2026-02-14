@@ -102,11 +102,11 @@ class SecureDocumentViewer(QDialog):
         self._apply_screen_capture_protection()
         self.start_monitoring()
     
-    def _log_security_event_async(self, activity_type: str, metadata: dict = None):
+    def _log_security_event_async(self, activity_type: str, metadata: dict = None, image_data: str = None):
         """Log security event asynchronously to prevent UI freezing."""
         def log_task():
             try:
-                self.api_client.log_security_event(activity_type, metadata)
+                self.api_client.log_security_event(activity_type, metadata, image_data=image_data)
             except Exception as e:
                 print(f"Failed to log security event async: {e}")
         
@@ -345,7 +345,10 @@ class SecureDocumentViewer(QDialog):
         # Show block overlay
         self.security_overlay.show_phone_detected_block()
         
-        # Log to backend
+        # Extract the captured frame from detection data
+        captured_image = detection_data.pop('image_data', None)
+        
+        # Log to backend with captured image
         self._log_security_event_async(
             activity_type="phone_detected",
             metadata={
@@ -354,7 +357,8 @@ class SecureDocumentViewer(QDialog):
                 "classification": self.classification,
                 "detection_timestamp": detection_data.get('timestamp'),
                 "confidence": detection_data.get('confidence')
-            }
+            },
+            image_data=captured_image
         )
         
         # Start 10-second timer - will close viewer when it expires
