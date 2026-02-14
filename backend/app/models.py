@@ -106,6 +106,5 @@ class SecurityLog(Base):
     activity_type = Column(String(100), nullable=False)
     timestamp = Column(TIMESTAMP(timezone=True), server_default=func.now())
     details = Column('metadata', JSON, nullable=True)
-    image_data = Column(Text, nullable=True)  # Base64-encoded camera capture
 
     user = relationship("User", back_populates="security_logs")

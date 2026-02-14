@@ -115,9 +115,9 @@ async def lifespan(app: FastAPI):
               AND access_logs.document_name IS NULL;
         """))
 
-        # Security logs: add image_data column for camera capture evidence
+        # Security logs: remove image_data column (image capture feature removed)
         await conn.execute(text(
-            "ALTER TABLE security_logs ADD COLUMN IF NOT EXISTS image_data TEXT;"
+            "ALTER TABLE security_logs DROP COLUMN IF EXISTS image_data;"
         ))
 
     # Verify Vertex AI credentials on startup (fail-fast for misconfigurations)
