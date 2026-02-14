@@ -183,8 +183,7 @@ class SecureDocumentViewer(QDialog):
         waiting_label = QLabel("""
             <div style='text-align: center; padding: 50px;'>
                 <h2>🔒 Security System Initializing</h2>
-                <p>Loading YOLOv8 object detection model...</p>
-                <p>Please wait while we prepare secure viewing.</p>
+                <p>Preparing secure viewing environment...</p>
                 <div style='margin: 20px 0;'>
                     <span style='font-size: 24px;'>⏳</span>
                 </div>

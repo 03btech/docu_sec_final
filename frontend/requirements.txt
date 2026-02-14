@@ -9,6 +9,7 @@ ultralytics
 opencv-python
 torch
 torchvision
+openvino  # Intel CPU optimized inference (2-4x faster than PyTorch CPU)
 
 # Charts
 matplotlib
