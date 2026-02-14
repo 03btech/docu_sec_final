@@ -106,12 +106,20 @@ async def classify_document_pipeline(doc_id: int, file_path: str):
             # Stage 1: Text extraction
             text_or_chunks = await extract_document_text_async(file_path)
             if not text_or_chunks:
-                logger.warning("[run=%s] No text extracted from %s", run_id, file_path)
-                await _update_status(
-                    db, doc_id, models.ClassificationStatus.failed,
-                    error="No text could be extracted from the document",
+                ext = os.path.splitext(file_path)[1].lower()
+                if ext != ".pdf":
+                    logger.warning("[run=%s] No text extracted from %s", run_id, file_path)
+                    await _update_status(
+                        db, doc_id, models.ClassificationStatus.failed,
+                        error="No text could be extracted from the document",
+                    )
+                    return
+
+                logger.info(
+                    "[run=%s] No extractable PDF text for %s; attempting image-based classification",
+                    run_id,
+                    file_path,
                 )
-                return
 
             # Stage 2: Gemini classification
             await _update_status(db, doc_id, models.ClassificationStatus.classifying)

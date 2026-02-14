@@ -6,7 +6,7 @@ import threading
 from typing import Tuple
 
 import vertexai
-from vertexai.generative_models import GenerativeModel, GenerationConfig
+from vertexai.generative_models import GenerativeModel, GenerationConfig, Part
 from google.api_core import exceptions as google_exceptions
 
 logger = logging.getLogger(__name__)
@@ -271,6 +271,85 @@ async def classify_text_with_gemini(text: str) -> Tuple[str, float]:
         logger.error(f"All {MAX_RETRIES} classification attempts failed. Last: {last_error}")
         # Raise specific exception based on what caused the final failure
         msg = f"Gemini classification failed after {MAX_RETRIES} attempts: {last_error}"
+        if last_error_type == "quota":
+            raise ClassificationQuotaError(msg)
+        elif last_error_type == "timeout":
+            raise ClassificationTimeoutError(msg)
+        else:
+            raise RuntimeError(msg)
+
+
+async def classify_multimodal_with_gemini(text: str, image_bytes_list: list[bytes]) -> Tuple[str, float]:
+    """Classify document content using Gemini multimodal input (text + images).
+
+    Reuses the same concurrency, timeout, and retry behavior as text-only classification.
+    If no images are provided, falls back to text-only classification.
+    """
+    global _api_semaphore
+    if _api_semaphore is None:
+        _api_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GEMINI_CALLS)
+
+    if not text.strip() and not image_bytes_list:
+        return "unclassified", 0.0
+    if not image_bytes_list:
+        return await classify_text_with_gemini(text)
+
+    async with _api_semaphore:
+        prompt = CLASSIFICATION_PROMPT + text + "\n" + DOCUMENT_TEXT_DELIMITER
+        timeout = int(os.getenv("CLASSIFICATION_REQUEST_TIMEOUT", str(DEFAULT_REQUEST_TIMEOUT)))
+
+        model = _get_model()
+        generation_config = GenerationConfig(
+            response_mime_type="application/json",
+            temperature=0.1,
+            max_output_tokens=1024,
+        )
+
+        contents = [prompt]
+        for image_bytes in image_bytes_list:
+            if image_bytes:
+                contents.append(Part.from_data(data=image_bytes, mime_type="image/png"))
+
+        last_error = None
+        last_error_type = "unknown"
+        for attempt in range(1, MAX_RETRIES + 1):
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        model.generate_content,
+                        contents,
+                        generation_config=generation_config,
+                    ),
+                    timeout=timeout,
+                )
+
+                if not response.text:
+                    logger.warning(f"Empty Gemini multimodal response on attempt {attempt}")
+                    continue
+
+                return parse_gemini_response(response.text)
+
+            except asyncio.TimeoutError:
+                last_error = f"Timeout ({timeout}s) on attempt {attempt}"
+                last_error_type = "timeout"
+                logger.warning(last_error)
+            except google_exceptions.ResourceExhausted:
+                last_error = f"Quota exceeded on attempt {attempt}"
+                last_error_type = "quota"
+                logger.warning(last_error)
+                await asyncio.sleep(min(5 * (2 ** (attempt - 1)), 30))
+            except google_exceptions.Unauthenticated as e:
+                raise ClassificationAuthError(f"Vertex AI authentication failed: {e}") from e
+            except google_exceptions.InvalidArgument as e:
+                raise ClassificationModelError(f"Gemini model does not support multimodal JSON mode: {e}") from e
+            except (google_exceptions.GoogleAPIError, IOError, json.JSONDecodeError) as e:
+                last_error = f"Retryable error on attempt {attempt}: {e}"
+                last_error_type = "transient"
+                logger.error(last_error)
+                await asyncio.sleep(1)
+
+        logger.error(f"All {MAX_RETRIES} multimodal classification attempts failed. Last: {last_error}")
+        msg = f"Gemini multimodal classification failed after {MAX_RETRIES} attempts: {last_error}"
         if last_error_type == "quota":
             raise ClassificationQuotaError(msg)
         elif last_error_type == "timeout":

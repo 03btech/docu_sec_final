@@ -5,7 +5,7 @@ import asyncio
 from typing import List, Tuple, Union
 import logging
 
-from ml.vertex_ai_classifier import classify_text_with_gemini
+from ml.vertex_ai_classifier import classify_text_with_gemini, classify_multimodal_with_gemini
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +96,11 @@ MAX_TOTAL_PAGES = int(os.getenv("PDF_MAX_TOTAL_PAGES", "10000"))  # Cost guardra
 MAX_CHUNKS = int(os.getenv("PDF_MAX_CHUNKS", "10"))  # Max Gemini API calls per document
 SECURITY_RANK = {"confidential": 3, "internal": 2, "public": 1, "unclassified": 0}
 
+# Multimodal PDF guards (Gemini image inputs)
+MAX_PDF_IMAGE_PAGES = int(os.getenv("PDF_IMAGE_MAX_PAGES", "5"))
+PDF_IMAGE_DPI = int(os.getenv("PDF_IMAGE_DPI", "110"))
+MAX_PDF_IMAGE_BYTES = int(os.getenv("PDF_IMAGE_MAX_BYTES", str(4 * 1024 * 1024)))
+
 # P1-7 FIX: Token limit guard for non-PDF files (DOCX, TXT).
 # Approximate token count: 1 token ≈ 4 chars (English average).
 # Default: 3,000,000 chars ≈ 750K tokens, within Gemini's 1M limit with headroom.
@@ -178,6 +183,41 @@ def get_pdf_page_count(file_path: str) -> int:
         return 0
 
 
+def extract_pdf_page_images(file_path: str) -> List[bytes]:
+    """Render first N PDF pages to PNG bytes for Gemini multimodal classification.
+
+    Safety guards:
+    - Limits number of rendered pages (MAX_PDF_IMAGE_PAGES)
+    - Limits per-image payload size (MAX_PDF_IMAGE_BYTES)
+    - Uses configurable render DPI (PDF_IMAGE_DPI)
+    """
+    images: List[bytes] = []
+    try:
+        with fitz.open(file_path) as doc:
+            total = min(len(doc), MAX_PDF_IMAGE_PAGES)
+            zoom = max(PDF_IMAGE_DPI, 36) / 72.0
+            matrix = fitz.Matrix(zoom, zoom)
+
+            for page_num in range(total):
+                try:
+                    pix = doc[page_num].get_pixmap(matrix=matrix, alpha=False)
+                    png_bytes = pix.tobytes("png")
+                    if len(png_bytes) > MAX_PDF_IMAGE_BYTES:
+                        logger.warning(
+                            f"Skipping page {page_num + 1} image for {os.path.basename(file_path)} "
+                            f"({len(png_bytes)} bytes > max {MAX_PDF_IMAGE_BYTES})"
+                        )
+                        continue
+                    images.append(png_bytes)
+                except Exception as e:
+                    logger.warning(f"Failed rendering PDF page image {page_num + 1}: {e}")
+                    continue
+    except Exception as e:
+        logger.error(f"Error extracting PDF page images from {file_path}: {e}")
+
+    return images
+
+
 # ============================================
 # Async extraction & classification (Vertex AI pipeline)
 # ============================================
@@ -251,6 +291,40 @@ async def classify_extracted_text_async(text_or_chunks: Union[str, List[str]], f
     from ANY chunk wins (single-chunk veto). This is intentional (err on security).
     Per-chunk results are logged at INFO level for admin review.
     """
+    ext = os.path.splitext(file_path)[1].lower()
+
+    # Multimodal path for PDFs: pass rendered page images + extracted text to Gemini.
+    # Falls back to the existing text-only flow if image extraction yields nothing.
+    if ext == '.pdf':
+        if isinstance(text_or_chunks, list):
+            combined_text = "\n\n".join(text_or_chunks)
+        else:
+            combined_text = text_or_chunks
+
+        if len(combined_text) > MAX_TEXT_CHARS:
+            logger.warning(
+                f"PDF text for {os.path.basename(file_path)} exceeds {MAX_TEXT_CHARS} chars "
+                f"({len(combined_text)} chars). Truncating before multimodal classification."
+            )
+            combined_text = combined_text[:MAX_TEXT_CHARS]
+
+        page_images = await asyncio.to_thread(extract_pdf_page_images, file_path)
+        if page_images:
+            label, confidence = await classify_multimodal_with_gemini(combined_text, page_images)
+            logger.info(
+                f"Document {os.path.basename(file_path)} → '{label}' "
+                f"(confidence={confidence:.3f}, pages_as_images={len(page_images)})"
+            )
+            return label
+
+        if not combined_text.strip():
+            raise ValueError(
+                "PDF could not be classified: no extractable text and no renderable page images. "
+                "The file may be encrypted, corrupted, or image rendering failed."
+            )
+
+        logger.info(f"No PDF page images extracted for {os.path.basename(file_path)}; using text-only fallback")
+
     if isinstance(text_or_chunks, list):
         # Multiple chunks from a large PDF
         best_label = "unclassified"
