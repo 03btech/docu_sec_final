@@ -45,7 +45,7 @@ async def log_security_event(
 
 @router.get("/logs", response_model=list[schemas.SecurityLogSummary])
 async def get_security_logs(
-    limit: int = 50,
+    limit: int | None = None,
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -59,12 +59,15 @@ async def get_security_logs(
     # Only admins can view security logs
     require_admin(current_user)
     
-    result = await db.execute(
+    query = (
         select(models.SecurityLog)
         .options(selectinload(models.SecurityLog.user))
         .order_by(models.SecurityLog.timestamp.desc())
-        .limit(limit)
     )
+    if limit is not None and limit > 0:
+        query = query.limit(limit)
+
+    result = await db.execute(query)
     
     logs = result.scalars().all()
     return logs
@@ -72,7 +75,7 @@ async def get_security_logs(
 
 @router.get("/access-logs", response_model=list[schemas.AccessLog])
 async def get_access_logs(
-    limit: int = 50,
+    limit: int | None = None,
     current_user: models.User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -86,12 +89,15 @@ async def get_access_logs(
     # Only admins can view access logs
     require_admin(current_user)
     
-    result = await db.execute(
+    query = (
         select(models.AccessLog)
         .options(selectinload(models.AccessLog.user), selectinload(models.AccessLog.document))
         .order_by(models.AccessLog.access_time.desc())
-        .limit(limit)
     )
+    if limit is not None and limit > 0:
+        query = query.limit(limit)
+
+    result = await db.execute(query)
     
     logs = result.scalars().all()
     return logs

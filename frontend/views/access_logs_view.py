@@ -220,9 +220,8 @@ class AccessLogsView(QWidget):
     # ── Download ──
 
     def _download_csv(self):
-        """Export currently displayed table rows to a CSV file."""
-        row_count = self.table.rowCount()
-        if row_count == 0:
+        """Export all loaded access logs to a CSV file."""
+        if not self.logs:
             QMessageBox.information(self, "No Data", "There are no logs to download.")
             return
 
@@ -237,26 +236,34 @@ class AccessLogsView(QWidget):
             with open(path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(["Document", "User", "Action", "Timestamp"])
-                for row in range(row_count):
-                    doc_item = self.table.item(row, 0)
-                    user_item = self.table.item(row, 1)
-                    # Action is a cell widget (badge), extract text from underlying data
-                    action_widget = self.table.cellWidget(row, 2)
-                    action_text = ""
-                    if action_widget:
-                        labels = action_widget.findChildren(QLabel)
-                        for lbl in labels:
-                            if lbl.text() and not lbl.pixmap():
-                                action_text = lbl.text()
-                                break
-                    ts_item = self.table.item(row, 3)
+                for log in self.logs:
+                    doc = log.get('document')
+                    if doc:
+                        doc_name = doc.get('filename', 'Unknown')
+                    else:
+                        doc_name = log.get('document_name') or 'Deleted Document'
+
+                    user = log.get('user') or {}
+                    user_name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
+                    if not user_name:
+                        user_name = user.get('username', 'Unknown')
+
+                    action_text = _normalise_action(log.get('action', '')).replace('_', ' ').title()
+
+                    ts = log.get('access_time', '')
+                    try:
+                        dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
+                        formatted_ts = dt.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+                    except Exception:
+                        formatted_ts = str(ts) if ts else 'N/A'
+
                     writer.writerow([
-                        doc_item.text() if doc_item else "",
-                        user_item.text() if user_item else "",
+                        doc_name,
+                        user_name,
                         action_text,
-                        ts_item.text() if ts_item else "",
+                        formatted_ts,
                     ])
-            self.status_label.setText(f"✅ Exported {row_count} logs to {path}")
+            self.status_label.setText(f"✅ Exported {len(self.logs)} logs to {path}")
         except Exception as e:
             QMessageBox.warning(self, "Export Error", f"Failed to save CSV: {e}")
 
@@ -289,7 +296,6 @@ class AccessLogsView(QWidget):
             self.status_label.setText("Loading access logs...")
             response = self.api_client.session.get(
                 f"{self.api_client.base_url}/security/access-logs",
-                params={"limit": 200},
                 timeout=10,
             )
             if response.status_code == 200:

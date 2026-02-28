@@ -264,9 +264,8 @@ class SecurityLogsView(QWidget):
     # ── Download ──
 
     def _download_csv(self):
-        """Export currently displayed table rows to a CSV file."""
-        row_count = self.table.rowCount()
-        if row_count == 0:
+        """Export all loaded security logs to a CSV file."""
+        if not self.logs:
             QMessageBox.information(self, "No Data", "There are no logs to download.")
             return
 
@@ -281,26 +280,34 @@ class SecurityLogsView(QWidget):
             with open(path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
                 writer.writerow(["User", "Event", "Details", "Timestamp"])
-                for row in range(row_count):
-                    user_item = self.table.item(row, 0)
-                    # Event is a cell widget (badge), extract text
-                    event_widget = self.table.cellWidget(row, 1)
-                    event_text = ""
-                    if event_widget:
-                        labels = event_widget.findChildren(QLabel)
-                        for lbl in labels:
-                            if lbl.text() and not lbl.pixmap():
-                                event_text = lbl.text()
-                                break
-                    detail_item = self.table.item(row, 2)
-                    ts_item = self.table.item(row, 3)
+                for log in self.logs:
+                    user_name = self._user_name(log)
+
+                    activity_type = log.get('activity_type', '')
+                    event_text = _display_label(activity_type)
+
+                    details = log.get('details') or {}
+                    if isinstance(details, str):
+                        try:
+                            details = json.loads(details)
+                        except Exception:
+                            details = {"raw_details": details}
+                    details_text = json.dumps(details, ensure_ascii=False, default=str)
+
+                    ts = log.get('timestamp', '')
+                    try:
+                        dt = datetime.fromisoformat(str(ts).replace('Z', '+00:00'))
+                        formatted_ts = dt.astimezone().strftime('%Y-%m-%d %H:%M:%S')
+                    except Exception:
+                        formatted_ts = str(ts) if ts else 'N/A'
+
                     writer.writerow([
-                        user_item.text() if user_item else "",
+                        user_name,
                         event_text,
-                        detail_item.text() if detail_item else "",
-                        ts_item.text() if ts_item else "",
+                        details_text,
+                        formatted_ts,
                     ])
-            self.status_label.setText(f"✅ Exported {row_count} logs to {path}")
+            self.status_label.setText(f"✅ Exported {len(self.logs)} logs to {path}")
         except Exception as e:
             QMessageBox.warning(self, "Export Error", f"Failed to save CSV: {e}")
 
@@ -333,7 +340,6 @@ class SecurityLogsView(QWidget):
             self.status_label.setText("Loading security logs...")
             response = self.api_client.session.get(
                 f"{self.api_client.base_url}/security/logs",
-                params={"limit": 200},
                 timeout=10,
             )
             if response.status_code == 200:

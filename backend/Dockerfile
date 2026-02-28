@@ -8,7 +8,8 @@ WORKDIR /app
 # - build-essential/gcc: for compiling asyncpg Cython extensions
 # - curl: required for Docker Compose healthcheck (curl -f http://localhost:8000/health)
 # - libpq-dev removed: was needed for psycopg2-binary (now using asyncpg)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update \
+    && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     curl \
