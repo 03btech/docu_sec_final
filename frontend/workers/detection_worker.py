@@ -1,5 +1,5 @@
 """
-YOLOv8-based security monitoring worker for detecting unauthorized persons and cell phones.
+YOLO26-based security monitoring worker for detecting unauthorized persons and cell phones.
 This worker runs in a separate thread to continuously monitor the webcam feed.
 
 Performance optimization strategy (auto-detected, best-first):
@@ -22,7 +22,7 @@ try:
     YOLO_AVAILABLE = True
 except (ImportError, OSError, Exception) as e:
     YOLO_AVAILABLE = False
-    print(f"⚠️ WARNING: YOLO unavailable ({type(e).__name__}: {e}). Security monitoring disabled.")
+    print(f"⚠️ WARNING: YOLO26 unavailable ({type(e).__name__}: {e}). Security monitoring disabled.")
 
 try:
     import mediapipe as mp
@@ -67,13 +67,13 @@ def _detect_best_device():
     return ('cpu', False, 'CPU')
 
 
-def _get_openvino_model_path(pt_model_name='yolov8l.pt'):
+def _get_openvino_model_path(pt_model_name='yolo26m.pt'):
     """Get the path where the cached OpenVINO model should live.
     
     The exported model is stored next to the .pt file so it persists across runs.
     """
     # Ultralytics exports to a folder named <stem>_openvino_model/
-    stem = Path(pt_model_name).stem  # 'yolov8m'
+    stem = Path(pt_model_name).stem  # 'yolo26m'
     return Path(stem + '_openvino_model')
 
 
@@ -88,7 +88,7 @@ def _is_openvino_available():
 
 class DetectionWorker(QThread):
     """
-    Worker thread for real-time object detection using YOLOv8.
+    Worker thread for real-time object detection using YOLO26.
     Monitors for unauthorized persons and cell phones.
     
     Automatically selects the fastest inference backend:
@@ -178,18 +178,18 @@ class DetectionWorker(QThread):
             return False
     
     def initialize_model(self):
-        """Initialize YOLOv8 model with the best available backend.
+        """Initialize YOLO26 model with the best available backend.
         
         Tries in order: CUDA GPU → OpenVINO → plain PyTorch CPU.
         """
         if not YOLO_AVAILABLE:
-            self.camera_error.emit("YOLOv8 not available. Please install: pip install ultralytics")
+            self.camera_error.emit("YOLO26 not available. Please install: pip install ultralytics")
             self.model_initialized.emit(False)
             return False
         
         try:
             self.detection_status.emit("🔄 Detecting best inference backend...")
-            print("\n🔄 Initializing YOLOv8 model...")
+            print("\n🔄 Initializing YOLO26 model...")
             
             # Detect best device (CUDA or CPU)
             self._device, self._use_half, self._backend_name = _detect_best_device()
@@ -199,9 +199,9 @@ class DetectionWorker(QThread):
             
             if is_cuda:
                 # ── CUDA GPU path ──
-                print(f"  🎮 Loading YOLOv8l on {self._backend_name}...")
-                self.detection_status.emit(f"🔄 Loading YOLOv8l on {self._backend_name}...")
-                self.model = YOLO('yolov8l.pt')
+                print(f"  🎮 Loading YOLO26m on {self._backend_name}...")
+                self.detection_status.emit(f"🔄 Loading YOLO26m on {self._backend_name}...")
+                self.model = YOLO('yolo26m.pt')
                 print(f"  ✅ GPU model loaded with FP16 half-precision")
                 
             elif openvino_available:
@@ -215,9 +215,9 @@ class DetectionWorker(QThread):
                     self.model = YOLO(str(ov_model_path), task='detect')
                 else:
                     # Export to OpenVINO on first run (one-time cost)
-                    print(f"  🔧 First run — exporting YOLOv8l to OpenVINO format...")
-                    self.detection_status.emit("🔄 First run: exporting YOLOv8l to OpenVINO format (one-time)...")
-                    pt_model = YOLO('yolov8l.pt')
+                    print(f"  🔧 First run — exporting YOLO26m to OpenVINO format...")
+                    self.detection_status.emit("🔄 First run: exporting YOLO26m to OpenVINO format (one-time)...")
+                    pt_model = YOLO('yolo26m.pt')
                     pt_model.export(format='openvino', imgsz=self.INFERENCE_IMG_SIZE)
                     self.model = YOLO(str(ov_model_path), task='detect')
                     print(f"  ✅ OpenVINO model exported and cached at: {ov_model_path}")
@@ -230,8 +230,8 @@ class DetectionWorker(QThread):
                 # ── Plain PyTorch CPU fallback ──
                 print("  ⚠️ OpenVINO not installed — using plain PyTorch CPU (slower)")
                 print("  💡 TIP: Install OpenVINO for 2-4x speedup: pip install openvino")
-                self.detection_status.emit("🔄 Loading YOLOv8l on CPU (install openvino for 2-4x speedup)...")
-                self.model = YOLO('yolov8l.pt')
+                self.detection_status.emit("🔄 Loading YOLO26m on CPU (install openvino for 2-4x speedup)...")
+                self.model = YOLO('yolo26m.pt')
                 self._backend_name = 'PyTorch CPU'
             
             print(f"\n{'='*50}")
@@ -240,7 +240,7 @@ class DetectionWorker(QThread):
             print(f"   Half-precision: {self._use_half}")
             print(f"   Target FPS: {self.TARGET_FPS}")
             print(f"{'='*50}\n")
-            self.detection_status.emit(f"✅ YOLOv8 model loaded — backend: {self._backend_name}")
+            self.detection_status.emit(f"✅ YOLO26 model loaded — backend: {self._backend_name}")
             
             # Initialize MediaPipe Face Mesh for gaze tracking
             if MEDIAPIPE_AVAILABLE:
@@ -262,7 +262,7 @@ class DetectionWorker(QThread):
             return True
             
         except Exception as e:
-            self.camera_error.emit(f"Failed to load YOLOv8 model: {str(e)}")
+            self.camera_error.emit(f"Failed to load YOLO26 model: {str(e)}")
             self.model_initialized.emit(False)
             return False
     
@@ -274,7 +274,7 @@ class DetectionWorker(QThread):
         if not self.initialize_camera():
             return
         
-        # Initialize YOLOv8 model
+        # Initialize YOLO26 model
         if not self.initialize_model():
             self.cap.release()
             return
@@ -435,10 +435,10 @@ class DetectionWorker(QThread):
                 return  # Skip detection if low lighting
             
             # Build inference kwargs — optimized per backend
+            # YOLO26 uses NMS-free end-to-end inference — no iou param needed
             infer_kwargs = dict(
                 verbose=False,
                 conf=min(self.person_confidence, self.phone_confidence),
-                iou=0.5,
                 imgsz=self.INFERENCE_IMG_SIZE,
             )
             

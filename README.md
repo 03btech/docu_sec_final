@@ -221,7 +221,7 @@ docu_sec/
 - **Authorization**: Role-based access control (Admin/User roles)
 - **Document Classification**: 4 levels (Public, Internal, Confidential, Unclassified)
 - **ML Classification**: Automatic document classification using BART zero-shot
-- **YOLOv8 Monitoring**: Real-time person/phone detection for confidential documents
+- **YOLO26 Monitoring**: Real-time person/phone detection for confidential documents
 - **Screen Protection**: Screen capture prevention (Windows)
 - **Watermarking**: Dynamic watermarks on documents
 - **Audit Logging**: Comprehensive access and security logs

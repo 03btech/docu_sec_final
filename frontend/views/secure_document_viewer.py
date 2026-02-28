@@ -1,5 +1,5 @@
 """
-Secure Document Viewer with YOLOv8 monitoring for confidential documents.
+Secure Document Viewer with YOLO26 monitoring for confidential documents.
 """
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QTextEdit, QLabel, QMessageBox, QWidget, QScrollArea,
@@ -33,7 +33,7 @@ else:
 
 class SecureDocumentViewer(QDialog):
     """
-    Secure document viewer with YOLOv8 monitoring for confidential documents.
+    Secure document viewer with YOLO26 monitoring for confidential documents.
     Monitors for person presence and cell phone detection.
     """
     
@@ -215,7 +215,7 @@ class SecureDocumentViewer(QDialog):
         self.waiting_label = waiting_label
     
     def start_monitoring(self):
-        """Start YOLOv8 monitoring."""
+        """Start YOLO26 monitoring."""
         try:
             self.status_bar.update_status("Initializing security monitoring...")
             
@@ -467,7 +467,7 @@ class SecureDocumentViewer(QDialog):
                 self.waiting_label.setText("""
                     <div style='text-align: center; padding: 50px;'>
                         <h2>❌ Security System Error</h2>
-                        <p>Failed to initialize YOLOv8 model.</p>
+                        <p>Failed to initialize YOLO26 model.</p>
                         <p>Please check your installation and try again.</p>
                         <div style='margin: 20px 0;'>
                             <span style='font-size: 24px;'>⚠️</span>

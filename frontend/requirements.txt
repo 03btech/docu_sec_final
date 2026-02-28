@@ -4,8 +4,8 @@ PyQt6
 # API Communication
 requests
 
-# ML (YOLOv8)
-ultralytics
+# ML (YOLO26)
+ultralytics>=8.3.60
 opencv-python
 torch
 torchvision
