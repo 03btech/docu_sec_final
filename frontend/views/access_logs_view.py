@@ -3,12 +3,15 @@ Access Logs View — Modern card-based layout with dynamic filters and action ba
 """
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QTableWidgetItem, QLabel, QPushButton, QHeaderView,
-                             QMessageBox, QComboBox, QLineEdit, QFrame, QScrollArea)
+                             QMessageBox, QComboBox, QLineEdit, QFrame, QScrollArea,
+                             QFileDialog)
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QColor
 import qtawesome as qta
 from api.client import APIClient
 from datetime import datetime
+import csv
+import io
 
 # Normalise compound backend actions like "share_with_user_5" → "share"
 _ACTION_NORMALIZE = {
@@ -128,6 +131,20 @@ class AccessLogsView(QWidget):
         refresh_btn.clicked.connect(self.refresh_data)
         fc_layout.addWidget(refresh_btn)
 
+        # Download CSV
+        download_btn = QPushButton("  Download CSV")
+        download_btn.setIcon(qta.icon('fa5s.file-csv', color='white'))
+        download_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        download_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #16a34a; color: white; border: none;
+                border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 500;
+            }
+            QPushButton:hover { background-color: #15803d; }
+        """)
+        download_btn.clicked.connect(self._download_csv)
+        fc_layout.addWidget(download_btn)
+
         layout.addWidget(filter_card)
 
         # ── Table Card ──
@@ -199,6 +216,49 @@ class AccessLogsView(QWidget):
         # Auto-refresh timer
         self.auto_refresh_timer = QTimer()
         self.auto_refresh_timer.timeout.connect(self.refresh_data)
+
+    # ── Download ──
+
+    def _download_csv(self):
+        """Export currently displayed table rows to a CSV file."""
+        row_count = self.table.rowCount()
+        if row_count == 0:
+            QMessageBox.information(self, "No Data", "There are no logs to download.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Access Logs", "access_logs.csv",
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(["Document", "User", "Action", "Timestamp"])
+                for row in range(row_count):
+                    doc_item = self.table.item(row, 0)
+                    user_item = self.table.item(row, 1)
+                    # Action is a cell widget (badge), extract text from underlying data
+                    action_widget = self.table.cellWidget(row, 2)
+                    action_text = ""
+                    if action_widget:
+                        labels = action_widget.findChildren(QLabel)
+                        for lbl in labels:
+                            if lbl.text() and not lbl.pixmap():
+                                action_text = lbl.text()
+                                break
+                    ts_item = self.table.item(row, 3)
+                    writer.writerow([
+                        doc_item.text() if doc_item else "",
+                        user_item.text() if user_item else "",
+                        action_text,
+                        ts_item.text() if ts_item else "",
+                    ])
+            self.status_label.setText(f"✅ Exported {row_count} logs to {path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Export Error", f"Failed to save CSV: {e}")
 
     # ── Helpers ──
 

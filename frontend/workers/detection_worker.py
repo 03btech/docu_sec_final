@@ -15,6 +15,7 @@ import time
 import os
 from pathlib import Path
 
+import math
 
 try:
     from ultralytics import YOLO
@@ -22,6 +23,13 @@ try:
 except (ImportError, OSError, Exception) as e:
     YOLO_AVAILABLE = False
     print(f"⚠️ WARNING: YOLO unavailable ({type(e).__name__}: {e}). Security monitoring disabled.")
+
+try:
+    import mediapipe as mp
+    MEDIAPIPE_AVAILABLE = True
+except ImportError:
+    MEDIAPIPE_AVAILABLE = False
+    print("⚠️ WARNING: MediaPipe unavailable. Gaze-away detection disabled.")
 
 
 def _detect_best_device():
@@ -59,7 +67,7 @@ def _detect_best_device():
     return ('cpu', False, 'CPU')
 
 
-def _get_openvino_model_path(pt_model_name='yolov8m.pt'):
+def _get_openvino_model_path(pt_model_name='yolov8l.pt'):
     """Get the path where the cached OpenVINO model should live.
     
     The exported model is stored next to the .pt file so it persists across runs.
@@ -91,6 +99,7 @@ class DetectionWorker(QThread):
     person_detected = pyqtSignal(bool)  # True if person detected, False if no person
     phone_detected = pyqtSignal(dict)  # Emits detection details
     low_lighting_detected = pyqtSignal(bool)  # True if low lighting detected
+    gaze_away_detected = pyqtSignal(bool)  # True if user is not looking at screen
     camera_error = pyqtSignal(str)  # Emits error messages
     detection_status = pyqtSignal(str)  # Status updates
     model_initialized = pyqtSignal(bool)  # True if model loaded successfully, False if failed
@@ -139,6 +148,13 @@ class DetectionWorker(QThread):
         self.low_lighting_detection_count = 0  # Current consecutive low light frames
         self.low_lighting_active = False  # Track current low lighting state
         
+        # Gaze-away detection settings
+        self.gaze_yaw_threshold = 30  # Degrees of yaw beyond which user is "looking away"
+        self.gaze_away_frame_threshold = 3  # Consecutive frames before triggering
+        self.gaze_away_frame_count = 0  # Current consecutive gaze-away frames
+        self.gaze_away_active = False  # Track current gaze-away state
+        self.face_mesh = None  # MediaPipe Face Mesh instance
+        
     def initialize_camera(self):
         """Initialize the webcam."""
         try:
@@ -183,9 +199,9 @@ class DetectionWorker(QThread):
             
             if is_cuda:
                 # ── CUDA GPU path ──
-                print(f"  🎮 Loading YOLOv8s on {self._backend_name}...")
-                self.detection_status.emit(f"🔄 Loading YOLOv8s on {self._backend_name}...")
-                self.model = YOLO('yolov8m.pt')
+                print(f"  🎮 Loading YOLOv8l on {self._backend_name}...")
+                self.detection_status.emit(f"🔄 Loading YOLOv8l on {self._backend_name}...")
+                self.model = YOLO('yolov8l.pt')
                 print(f"  ✅ GPU model loaded with FP16 half-precision")
                 
             elif openvino_available:
@@ -199,9 +215,9 @@ class DetectionWorker(QThread):
                     self.model = YOLO(str(ov_model_path), task='detect')
                 else:
                     # Export to OpenVINO on first run (one-time cost)
-                    print(f"  🔧 First run — exporting YOLOv8s to OpenVINO format...")
-                    self.detection_status.emit("🔄 First run: exporting YOLOv8s to OpenVINO format (one-time)...")
-                    pt_model = YOLO('yolov8m.pt')
+                    print(f"  🔧 First run — exporting YOLOv8l to OpenVINO format...")
+                    self.detection_status.emit("🔄 First run: exporting YOLOv8l to OpenVINO format (one-time)...")
+                    pt_model = YOLO('yolov8l.pt')
                     pt_model.export(format='openvino', imgsz=self.INFERENCE_IMG_SIZE)
                     self.model = YOLO(str(ov_model_path), task='detect')
                     print(f"  ✅ OpenVINO model exported and cached at: {ov_model_path}")
@@ -214,8 +230,8 @@ class DetectionWorker(QThread):
                 # ── Plain PyTorch CPU fallback ──
                 print("  ⚠️ OpenVINO not installed — using plain PyTorch CPU (slower)")
                 print("  💡 TIP: Install OpenVINO for 2-4x speedup: pip install openvino")
-                self.detection_status.emit("🔄 Loading YOLOv8s on CPU (install openvino for 2-4x speedup)...")
-                self.model = YOLO('yolov8m.pt')
+                self.detection_status.emit("🔄 Loading YOLOv8l on CPU (install openvino for 2-4x speedup)...")
+                self.model = YOLO('yolov8l.pt')
                 self._backend_name = 'PyTorch CPU'
             
             print(f"\n{'='*50}")
@@ -225,6 +241,23 @@ class DetectionWorker(QThread):
             print(f"   Target FPS: {self.TARGET_FPS}")
             print(f"{'='*50}\n")
             self.detection_status.emit(f"✅ YOLOv8 model loaded — backend: {self._backend_name}")
+            
+            # Initialize MediaPipe Face Mesh for gaze tracking
+            if MEDIAPIPE_AVAILABLE:
+                try:
+                    self.face_mesh = mp.solutions.face_mesh.FaceMesh(
+                        max_num_faces=1,
+                        refine_landmarks=False,
+                        min_detection_confidence=0.5,
+                        min_tracking_confidence=0.5
+                    )
+                    print("  ✅ MediaPipe Face Mesh initialized for gaze tracking")
+                except Exception as e:
+                    print(f"  ⚠️ Failed to initialize Face Mesh: {e}")
+                    self.face_mesh = None
+            else:
+                print("  ⚠️ Gaze-away detection disabled (mediapipe not installed)")
+            
             self.model_initialized.emit(True)
             return True
             
@@ -307,6 +340,92 @@ class DetectionWorker(QThread):
         except Exception as e:
             print(f"Error checking lighting: {e}")
             return True  # Assume adequate lighting on error
+    
+    def check_gaze(self, frame):
+        """Check if user is looking at the screen using head pose estimation.
+        
+        Uses MediaPipe Face Mesh landmarks + cv2.solvePnP to estimate
+        the head yaw angle. If yaw exceeds the threshold, the user is
+        considered to be looking away.
+        """
+        if self.face_mesh is None:
+            return  # Gaze tracking not available
+        
+        try:
+            # Convert BGR to RGB for MediaPipe
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.face_mesh.process(rgb_frame)
+            
+            if not results.multi_face_landmarks:
+                # No face detected — handled by person detection, skip gaze check
+                return
+            
+            face_landmarks = results.multi_face_landmarks[0]
+            h, w, _ = frame.shape
+            
+            # 6 key landmarks for head pose estimation (indices into MediaPipe's 468 landmarks)
+            # Nose tip, Chin, Left eye outer, Right eye outer, Left mouth corner, Right mouth corner
+            landmark_indices = [1, 152, 33, 263, 61, 291]
+            
+            # 2D image points
+            image_points = np.array([
+                [face_landmarks.landmark[i].x * w, face_landmarks.landmark[i].y * h]
+                for i in landmark_indices
+            ], dtype=np.float64)
+            
+            # 3D model points (generic face model, approximate)
+            model_points = np.array([
+                [0.0, 0.0, 0.0],        # Nose tip
+                [0.0, -330.0, -65.0],    # Chin
+                [-225.0, 170.0, -135.0], # Left eye outer
+                [225.0, 170.0, -135.0],  # Right eye outer
+                [-150.0, -150.0, -125.0],# Left mouth corner
+                [150.0, -150.0, -125.0]  # Right mouth corner
+            ], dtype=np.float64)
+            
+            # Camera matrix (approximate using frame dimensions)
+            focal_length = w
+            center = (w / 2, h / 2)
+            camera_matrix = np.array([
+                [focal_length, 0, center[0]],
+                [0, focal_length, center[1]],
+                [0, 0, 1]
+            ], dtype=np.float64)
+            
+            dist_coeffs = np.zeros((4, 1))  # Assume no lens distortion
+            
+            # Solve for head pose
+            success, rotation_vector, translation_vector = cv2.solvePnP(
+                model_points, image_points, camera_matrix, dist_coeffs,
+                flags=cv2.SOLVEPNP_ITERATIVE
+            )
+            
+            if not success:
+                return
+            
+            # Convert rotation vector to rotation matrix, then extract yaw
+            rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
+            # Extract Euler angles (yaw = rotation around Y axis)
+            yaw = math.degrees(math.atan2(rotation_matrix[2][0], rotation_matrix[2][2]))
+            
+            looking_away = abs(yaw) > self.gaze_yaw_threshold
+            
+            if looking_away:
+                self.gaze_away_frame_count += 1
+                if self.gaze_away_frame_count >= self.gaze_away_frame_threshold:
+                    if not self.gaze_away_active:
+                        self.gaze_away_active = True
+                        self.gaze_away_detected.emit(True)
+                        self.detection_status.emit(f"👁️ User looking away (yaw: {yaw:.0f}°) — Screen blocked")
+            else:
+                self.gaze_away_frame_count = 0
+                if self.gaze_away_active:
+                    self.gaze_away_active = False
+                    self.gaze_away_detected.emit(False)
+                    self.detection_status.emit("✅ User looking at screen — Monitoring active")
+                    
+        except Exception as e:
+            print(f"Error checking gaze: {e}")
     
     def process_frame(self, frame):
         """Process a single frame for detections."""
@@ -404,6 +523,9 @@ class DetectionWorker(QThread):
                 # Reset alert flag when count drops to zero (phone fully gone)
                 if self.phone_detection_count == 0:
                     self.phone_alert_emitted = False
+            
+            # Check gaze direction (runs after YOLO, uses same frame)
+            self.check_gaze(frame)
                 
         except Exception as e:
             print(f"Error processing frame: {e}")
@@ -419,4 +541,6 @@ class DetectionWorker(QThread):
         """Release resources."""
         if self.cap is not None:
             self.cap.release()
+        if self.face_mesh is not None:
+            self.face_mesh.close()
         self.detection_status.emit("✅ Camera released")

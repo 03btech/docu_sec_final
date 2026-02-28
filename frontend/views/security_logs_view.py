@@ -4,13 +4,14 @@ Security Logs View — Modern card-based layout with dynamic filters and event b
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget,
                              QTableWidgetItem, QLabel, QPushButton, QHeaderView,
                              QMessageBox, QComboBox, QLineEdit, QFrame, QScrollArea,
-                             QTextEdit)
+                             QTextEdit, QFileDialog)
 from PyQt6.QtCore import Qt, QTimer, QSize
 from PyQt6.QtGui import QColor
 import qtawesome as qta
 from api.client import APIClient
 from datetime import datetime
 import json
+import csv
 
 # ── Activity type display mapping ──
 _ACTIVITY_STYLE: dict[str, tuple[str, str, str, str]] = {
@@ -117,6 +118,20 @@ class SecurityLogsView(QWidget):
         """)
         refresh_btn.clicked.connect(self.refresh_data)
         fc_layout.addWidget(refresh_btn)
+
+        # Download CSV
+        download_btn = QPushButton("  Download CSV")
+        download_btn.setIcon(qta.icon('fa5s.file-csv', color='white'))
+        download_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        download_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #16a34a; color: white; border: none;
+                border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 500;
+            }
+            QPushButton:hover { background-color: #15803d; }
+        """)
+        download_btn.clicked.connect(self._download_csv)
+        fc_layout.addWidget(download_btn)
 
         layout.addWidget(filter_card)
 
@@ -245,6 +260,49 @@ class SecurityLogsView(QWidget):
         # Auto-refresh timer
         self.auto_refresh_timer = QTimer()
         self.auto_refresh_timer.timeout.connect(self.refresh_data)
+
+    # ── Download ──
+
+    def _download_csv(self):
+        """Export currently displayed table rows to a CSV file."""
+        row_count = self.table.rowCount()
+        if row_count == 0:
+            QMessageBox.information(self, "No Data", "There are no logs to download.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Security Logs", "security_logs.csv",
+            "CSV Files (*.csv);;All Files (*)"
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(["User", "Event", "Details", "Timestamp"])
+                for row in range(row_count):
+                    user_item = self.table.item(row, 0)
+                    # Event is a cell widget (badge), extract text
+                    event_widget = self.table.cellWidget(row, 1)
+                    event_text = ""
+                    if event_widget:
+                        labels = event_widget.findChildren(QLabel)
+                        for lbl in labels:
+                            if lbl.text() and not lbl.pixmap():
+                                event_text = lbl.text()
+                                break
+                    detail_item = self.table.item(row, 2)
+                    ts_item = self.table.item(row, 3)
+                    writer.writerow([
+                        user_item.text() if user_item else "",
+                        event_text,
+                        detail_item.text() if detail_item else "",
+                        ts_item.text() if ts_item else "",
+                    ])
+            self.status_label.setText(f"✅ Exported {row_count} logs to {path}")
+        except Exception as e:
+            QMessageBox.warning(self, "Export Error", f"Failed to save CSV: {e}")
 
     # ── Helpers ──
 

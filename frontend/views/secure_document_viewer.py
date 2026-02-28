@@ -2,7 +2,8 @@
 Secure Document Viewer with YOLOv8 monitoring for confidential documents.
 """
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
-                             QTextEdit, QLabel, QMessageBox, QWidget, QScrollArea)
+                             QTextEdit, QLabel, QMessageBox, QWidget, QScrollArea,
+                             QGraphicsBlurEffect)
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QPixmap, QImage, QPainter, QFont, QColor
 import qtawesome as qta
@@ -58,9 +59,11 @@ class SecureDocumentViewer(QDialog):
         self._security_initialized = False
         self._phone_alert_active = False
         self._low_lighting_active = False
+        self._gaze_away_active = False
         self._phone_check_timer = None
         self._low_lighting_timer = None
         self._first_detection_received = False  # Track if AI detection has verified at least once
+        self.gaze_away_logged = False
         
         self.setWindowTitle(f"🔒 Secure View - {self.filename}")
         self.setMinimumSize(900, 700)
@@ -151,6 +154,15 @@ class SecureDocumentViewer(QDialog):
         self.content_layout = QVBoxLayout(self.content_widget)
         main_layout.addWidget(self.content_widget)
         
+        # Apply blur effect to content area for confidential documents
+        # This makes the document text unreadable at a glance while
+        # preserving all mouse events (scroll, click) since the effect
+        # is applied directly on the widget, not as an overlay
+        if self.classification.lower() == 'confidential':
+            self.blur_effect = QGraphicsBlurEffect(self)
+            self.blur_effect.setBlurRadius(4)
+            self.content_widget.setGraphicsEffect(self.blur_effect)
+        
         # Warning label
         if self.classification.lower() == 'confidential':
             warning_label = QLabel("🔒 CONFIDENTIAL: This document is under active security monitoring")
@@ -217,6 +229,7 @@ class SecureDocumentViewer(QDialog):
             self.detection_worker.camera_error.connect(self.on_camera_error)
             self.detection_worker.detection_status.connect(self.on_detection_status)
             self.detection_worker.model_initialized.connect(self.on_model_initialized)
+            self.detection_worker.gaze_away_detected.connect(self.on_gaze_away_detection)
             
             # Start the worker thread
             self.detection_worker.start()
@@ -244,8 +257,8 @@ class SecureDocumentViewer(QDialog):
                 }
             )
         
-        # Don't hide overlay if phone alert or low lighting is active - they take priority
-        if self._phone_alert_active or self._low_lighting_active:
+        # Don't hide overlay if phone alert or low lighting or gaze away is active - they take priority
+        if self._phone_alert_active or self._low_lighting_active or self._gaze_away_active:
             return
         
         if person_present:
@@ -281,6 +294,9 @@ class SecureDocumentViewer(QDialog):
             
             self._low_lighting_active = True
             
+            # Also clear gaze away if active (low lighting takes priority)
+            self._gaze_away_active = False
+            
             # Low lighting detected - show block and log
             self.security_overlay.show_low_lighting_block()
             
@@ -311,10 +327,42 @@ class SecureDocumentViewer(QDialog):
                 self._low_lighting_timer.stop()
                 self._low_lighting_timer = None
             
-            # Hide block (only if person present and no phone alert)
-            if self.person_present and not self._phone_alert_active:
+            # Hide block (only if person present and no phone alert and no gaze away)
+            if self.person_present and not self._phone_alert_active and not self._gaze_away_active:
                 self.security_overlay.hide_block()
             self.low_lighting_logged = False
+    
+    def on_gaze_away_detection(self, looking_away: bool):
+        """Handle gaze-away detection - blocks view when user looks away."""
+        # Don't process if higher-priority alerts are active
+        if self._phone_alert_active or self._low_lighting_active:
+            return
+        
+        if looking_away:
+            if self._gaze_away_active:
+                return  # Already handling gaze away
+            
+            self._gaze_away_active = True
+            self.security_overlay.show_gaze_away_block()
+            
+            if not self.gaze_away_logged:
+                self._log_security_event_async(
+                    activity_type="gaze_away_detected",
+                    metadata={
+                        "document_id": self.document_data.get('id'),
+                        "document_name": self.filename,
+                        "classification": self.classification,
+                        "reason": "User not looking at screen"
+                    }
+                )
+                self.gaze_away_logged = True
+        else:
+            self._gaze_away_active = False
+            
+            # Hide block only if person present and no other alerts
+            if self.person_present and not self._phone_alert_active and not self._low_lighting_active:
+                self.security_overlay.hide_block()
+            self.gaze_away_logged = False
     
     def _close_after_low_lighting(self):
         """Close viewer after low lighting timeout."""

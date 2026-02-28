@@ -132,6 +132,18 @@ class SecurityBlockOverlay(QWidget):
         self.raise_()
         self.update()  # Force repaint
     
+    def show_gaze_away_block(self):
+        """Show overlay when user is not looking at the screen."""
+        self.message_label.setText("👁️ GAZE AWAY DETECTED")
+        self.message_label.setStyleSheet("font-size: 48px; padding: 20px; color: #9b59b6; background-color: transparent;")
+        self.details_label.setText("Please look at the screen to view this confidential document")
+        self.status_label.setText("Document will be revealed when you look back at the screen")
+        self.notice_label.setText("⚠️ Gaze-away security event has been logged")
+        self.setGeometry(self.parent().rect())
+        self.show()
+        self.raise_()
+        self.update()  # Force repaint
+    
     def hide_block(self):
         """Hide the blocking overlay."""
         self.hide()
