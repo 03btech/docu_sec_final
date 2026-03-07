@@ -2,6 +2,7 @@ from PyQt6.QtWidgets import QMessageBox
 from api.client import APIClient
 from widgets.enhanced_share_dialog import EnhancedShareDialog
 from widgets.manage_sharing_dialog import ManageSharingDialog
+from widgets.classification_dialog import ClassificationDialog
 from .base_document_view import BaseDocumentView
 
 
@@ -21,11 +22,17 @@ class MyDocumentsView(BaseDocumentView):
     def get_action_callbacks(self, row: int) -> dict:
         doc = self.documents[row]
         classification = doc.get('classification', 'unclassified').lower()
+        classification_status = doc.get('classification_status', 'completed')
 
         callbacks = {
             'view': self.view_document,
             'delete': self.delete_document,
+            'change_classification': self.change_classification,
         }
+
+        # Show retry for failed classifications
+        if classification_status == 'failed':
+            callbacks['retry'] = self.retry_classification
 
         if classification == 'confidential':
             callbacks['share'] = self.share_document
@@ -51,3 +58,44 @@ class MyDocumentsView(BaseDocumentView):
         doc = self.documents[row]
         dialog = ManageSharingDialog(doc, self.api_client, self)
         dialog.exec()
+
+    def retry_classification(self, row):
+        """Retry classification for a failed document."""
+        doc = self.documents[row]
+        confirm = QMessageBox.question(
+            self, "Retry Classification?",
+            f"Retry AI classification for '{doc.get('filename')}'?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            try:
+                self.api_client.retry_classification(doc['id'])
+                QMessageBox.information(
+                    self, "Retrying",
+                    "Classification has been requeued. Refresh to see the updated status."
+                )
+                self.load_documents()
+            except Exception as e:
+                QMessageBox.critical(self, "Retry Failed", f"Could not retry classification: {e}")
+
+    def change_classification(self, row):
+        """Open dialog to manually change a document's classification."""
+        doc = self.documents[row]
+        dialog = ClassificationDialog(doc, self)
+        if dialog.exec():
+            new_classification = dialog.selected_classification
+            if new_classification and new_classification != doc.get('classification'):
+                try:
+                    self.api_client.update_document(
+                        doc['id'], doc.get('filename', ''), new_classification
+                    )
+                    QMessageBox.information(
+                        self, "Classification Updated",
+                        f"Classification changed to {new_classification.upper()}."
+                    )
+                    self.load_documents()
+                except Exception as e:
+                    QMessageBox.critical(
+                        self, "Update Failed",
+                        f"Could not update classification: {e}"
+                    )

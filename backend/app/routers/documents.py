@@ -134,6 +134,7 @@ async def classify_document_pipeline(doc_id: int, file_path: str):
             if document:
                 document.classification = classification
                 document.classification_status = models.ClassificationStatus.completed
+                document.classification_source = models.ClassificationSource.ai
                 if classification == models.ClassificationLevel.unclassified:
                     document.classification_error = (
                         "Low confidence — Gemini could not determine a classification. "
@@ -464,18 +465,33 @@ async def update_document(
     result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
     document = result.scalars().first()
 
+    # Detect manual classification change
+    old_classification = document.classification
+    new_classification = document_update.classification
+    classification_changed = old_classification != new_classification
+
     # Update fields
     document.filename = document_update.filename
-    document.classification = document_update.classification
+    document.classification = new_classification
+
+    if classification_changed:
+        document.classification_source = models.ClassificationSource.manual
+        document.classification_status = models.ClassificationStatus.completed
+        document.classification_error = None
 
     await db.commit()
     await db.refresh(document)
 
-    # Log
+    # Log action — distinguish metadata edits from manual reclassification
+    action = (
+        f'manual_classify:{old_classification.value}->{new_classification.value}'
+        if classification_changed
+        else 'edit_metadata'
+    )
     await crud.create_access_log(db, schemas.AccessLogCreate(
         document_id=doc_id,
         user_id=current_user.id,
-        action='edit_metadata'
+        action=action
     ))
 
     return document

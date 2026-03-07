@@ -214,10 +214,20 @@ class BaseDocumentView(QWidget):
             self.table.set_documents_with_row_callbacks(filtered, self._get_filtered_callbacks)
 
     def _get_filtered_callbacks(self, row: int) -> dict:
-        """Map filtered row index to actual document and get callbacks."""
+        """Map filtered row index to actual document and get callbacks.
+
+        Wraps each callback so it always receives the correct index into
+        self.documents, regardless of the row number that ActionMenuButton
+        passes (which is the *table* row and may differ when search is active).
+        """
         doc = self._filtered_docs[row]
         actual_row = self.documents.index(doc)
-        return self.get_action_callbacks(actual_row)
+        raw_callbacks = self.get_action_callbacks(actual_row)
+        # Wrap: lambda ignores the row arg from ActionMenuButton, uses actual_row
+        return {
+            key: (lambda _row, _ar=actual_row, _cb=fn: _cb(_ar))
+            for key, fn in raw_callbacks.items()
+        }
 
     def _apply_search_filter(self):
         """Re-render table when search text changes."""

@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-from .models import ClassificationLevel, PermissionLevel, UserRole, ClassificationStatus
+from .models import ClassificationLevel, PermissionLevel, UserRole, ClassificationStatus, ClassificationSource
 
 class DepartmentBase(BaseModel):
     name: str
@@ -89,6 +89,7 @@ class Document(DocumentBase):
     upload_date: datetime
     classification_status: Optional[ClassificationStatus] = ClassificationStatus.queued
     classification_error: Optional[str] = None
+    classification_source: Optional[ClassificationSource] = ClassificationSource.ai
 
     class Config:
         from_attributes = True

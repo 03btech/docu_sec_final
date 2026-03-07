@@ -160,7 +160,7 @@ class SecureDocumentViewer(QDialog):
         # is applied directly on the widget, not as an overlay
         if self.classification.lower() == 'confidential':
             self.blur_effect = QGraphicsBlurEffect(self)
-            self.blur_effect.setBlurRadius(4)
+            self.blur_effect.setBlurRadius(2)
             self.content_widget.setGraphicsEffect(self.blur_effect)
         
         # Warning label

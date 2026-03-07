@@ -195,6 +195,24 @@ class ActionMenuButton(QPushButton):
             )
             manage_action.triggered.connect(lambda: self.action_callbacks['manage_sharing'](self.row))
         
+        if 'retry' in self.action_callbacks:
+            if menu.actions():
+                menu.addSeparator()
+            retry_action = menu.addAction(
+                qta.icon('fa5s.redo', color='#f59e0b'),
+                "Retry Classification"
+            )
+            retry_action.triggered.connect(lambda: self.action_callbacks['retry'](self.row))
+        
+        if 'change_classification' in self.action_callbacks:
+            if menu.actions() and 'retry' not in self.action_callbacks:
+                menu.addSeparator()
+            change_action = menu.addAction(
+                qta.icon('fa5s.tag', color='#6366f1'),
+                "Change Classification"
+            )
+            change_action.triggered.connect(lambda: self.action_callbacks['change_classification'](self.row))
+        
         if 'delete' in self.action_callbacks:
             if menu.actions():  # Only add separator if there are other actions
                 menu.addSeparator()

@@ -78,6 +78,17 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_queued_at TIMESTAMPTZ;"
         ))
 
+        # classification_source enum: tracks AI vs manual classification
+        await conn.execute(text("""
+            DO $$ BEGIN
+                CREATE TYPE classificationsource AS ENUM ('ai','manual');
+            EXCEPTION WHEN duplicate_object THEN null;
+            END $$;
+        """))
+        await conn.execute(text(
+            "ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_source classificationsource DEFAULT 'ai';"
+        ))
+
         # P2-REVIEW-16: Index on classification_status for admin retry / stale recovery queries
         await conn.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_documents_classification_status

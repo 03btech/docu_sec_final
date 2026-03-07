@@ -20,6 +20,10 @@ class ClassificationStatus(enum.Enum):
     completed = "completed"               # Classification done
     failed = "failed"                     # All retries exhausted
 
+class ClassificationSource(enum.Enum):
+    ai = "ai"           # Set by Gemini classification pipeline
+    manual = "manual"   # Manually set/corrected by document owner
+
 class PermissionLevel(enum.Enum):
     view = "view"
     edit = "edit"
@@ -66,6 +70,7 @@ class Document(Base):
     classification = Column(Enum(ClassificationLevel), default=ClassificationLevel.unclassified)
     classification_status = Column(Enum(ClassificationStatus), default=ClassificationStatus.queued)
     classification_error = Column(String(500), nullable=True)
+    classification_source = Column(Enum(ClassificationSource), default=ClassificationSource.ai, nullable=True)
     # ⚠️ P1-REVIEW-6: Timestamp for accurate stale detection.
     # Set to NOW() when the pipeline starts, not at upload time.
     classification_queued_at = Column(TIMESTAMP(timezone=True), nullable=True)
