@@ -138,12 +138,16 @@ class APIClient:
             return True
         return False
 
-    def update_document(self, doc_id: int, filename: str, classification: str) -> bool:
+    def update_document(self, doc_id: int, filename: str, classification: str, departments: Optional[List[int]] = None) -> bool:
         """Update document metadata."""
-        response = self.session.put(f"{self.base_url}/documents/{doc_id}", json={
+        data = {
             "filename": filename,
             "classification": classification
-        })
+        }
+        if departments is not None:
+            data["departments"] = departments
+            
+        response = self.session.put(f"{self.base_url}/documents/{doc_id}", json=data)
         return response.status_code == 200
 
     def delete_document(self, doc_id: int) -> bool:

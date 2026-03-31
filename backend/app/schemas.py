@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 from .models import ClassificationLevel, PermissionLevel, UserRole, ClassificationStatus, ClassificationSource
 
@@ -79,7 +79,30 @@ class DocumentBase(BaseModel):
     classification: Optional[ClassificationLevel] = ClassificationLevel.unclassified
 
 class DocumentCreate(DocumentBase):
-    pass
+    departments: Optional[List[int]] = None
+
+class DocumentDepartmentInfo(BaseModel):
+    """Department tag on a document (AI-inferred or manual)."""
+    id: int
+    department_id: int
+    department_name: str = ""  # Resolved for display
+    source: Optional[ClassificationSource] = ClassificationSource.ai
+
+    class Config:
+        from_attributes = True
+
+    @classmethod
+    def from_orm_with_dept(cls, obj):
+        """Create from ORM object, resolving department name."""
+        dept_name = ""
+        if hasattr(obj, 'department') and obj.department:
+            dept_name = obj.department.name
+        return cls(
+            id=obj.id,
+            department_id=obj.department_id,
+            department_name=dept_name,
+            source=obj.source,
+        )
 
 class Document(DocumentBase):
     id: int
@@ -90,6 +113,7 @@ class Document(DocumentBase):
     classification_status: Optional[ClassificationStatus] = ClassificationStatus.queued
     classification_error: Optional[str] = None
     classification_source: Optional[ClassificationSource] = ClassificationSource.ai
+    departments: List[DocumentDepartmentInfo] = []
 
     class Config:
         from_attributes = True

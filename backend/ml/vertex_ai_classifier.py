@@ -3,7 +3,7 @@ import json
 import logging
 import asyncio
 import threading
-from typing import Tuple
+from typing import Tuple, List
 
 import vertexai
 from vertexai.generative_models import GenerativeModel, GenerationConfig, Part
@@ -62,9 +62,15 @@ MAX_RETRIES = int(os.getenv("CLASSIFICATION_RETRY_ATTEMPTS", "3"))
 # ============================================
 # Prompt Template
 # ============================================
-CLASSIFICATION_PROMPT = """You are a document security classifier for an enterprise document management system.
+CLASSIFICATION_PROMPT = """You are a document security classifier and department tagger for an enterprise document management system.
 
-Analyze the following document text and classify it into exactly ONE of these categories:
+Analyze the following document text and:
+1. Classify it into exactly ONE security level.
+2. Identify which departments this document is relevant to.
+
+## Security Classification
+
+Classify into ONE of these categories:
 
 1. **confidential** — Contains sensitive information: financial data (salaries, budgets, revenue),
    personal/HR data (SSN, medical, performance reviews), legal matters (lawsuits, settlements),
@@ -83,16 +89,31 @@ Rules:
 - When in doubt between confidential and internal, choose **confidential** (err on the side of security).
 - When in doubt between internal and public, choose **internal**.
 - Base your decision on the CONTENT, not just headers or titles.
-- Respond ONLY with valid JSON, no extra text.
+
+## Department Tagging
+
+{department_instruction}
+
+Respond ONLY with valid JSON, no extra text.
 
 Respond with this exact JSON format:
-{"classification": "<label>", "confidence": <0.0-1.0>, "reason": "<one sentence>"}
+{{"classification": "<label>", "confidence": <0.0-1.0>, "reason": "<one sentence>", "departments": ["<dept1>", "<dept2>"]}}
 
 --- DOCUMENT TEXT ---
 """
-# ⚠️ PROMPT INJECTION SAFETY: Use string concatenation, NOT str.format().
-# Document text may contain { } characters (JSON files, code, templates)
-# which cause KeyError/IndexError with Python's str.format().
+
+DEPARTMENT_INSTRUCTION_WITH_LIST = """Based on the document content, identify which departments this document is most relevant to.
+Choose ONLY from this list of valid departments: {dept_list}
+Select one or more departments that the document content directly relates to, up to a MAXIMUM of 5 departments.
+If the content does not clearly relate to any department, return an empty list.
+Do NOT invent department names — use only the exact names from the list above."""
+
+DEPARTMENT_INSTRUCTION_NO_LIST = """No departments are defined in the system.
+Return an empty list for departments."""
+
+# ⚠️ PROMPT INJECTION SAFETY: Document text is concatenated (not formatted) to
+# avoid KeyError with { } in document content. The department_instruction uses
+# .format() safely because it only contains controlled admin department names.
 #
 # ⚠️ REVIEW NOTE P3-REVIEW-18 (PROMPT INJECTION DEFENSE):
 # The prompt instructs Gemini to classify text, but a malicious document could
@@ -144,19 +165,36 @@ def _get_model() -> GenerativeModel:
     return _model
 
 
-# ⚠️ REVIEW FIX P3-REVIEW-19: Parse threshold ONCE at module level instead of
-# on every call to parse_gemini_response(). os.getenv() is cheap (~1µs) but
-# float() + getenv() on every classification is unnecessary when the value
-# never changes at runtime. Also makes the threshold visible in module constants.
+# ⚠️ REVIEW FIX P3-REVIEW-19: Parse threshold ONCE at module level
 _CONFIDENCE_THRESHOLD = float(
     os.getenv("CLASSIFICATION_CONFIDENCE_THRESHOLD", str(DEFAULT_CONFIDENCE_THRESHOLD))
 )
 
+def _build_prompt(text: str, department_names: List[str] | None = None) -> str:
+    """Build the full classification + department tagging prompt.
+
+    Department names are inserted via .format() into the instruction template
+    (safe — they come from admin DB, not user input). Document text is
+    concatenated to avoid prompt injection via { } characters.
+    """
+    if department_names:
+        dept_instruction = DEPARTMENT_INSTRUCTION_WITH_LIST.format(
+            dept_list=", ".join(department_names)
+        )
+    else:
+        dept_instruction = DEPARTMENT_INSTRUCTION_NO_LIST
+
+    prompt_template = CLASSIFICATION_PROMPT.replace(
+        "{department_instruction}", dept_instruction
+    )
+    return prompt_template + text + "\n" + DOCUMENT_TEXT_DELIMITER
+
+
 # ============================================
 # Response Parsing
 # ============================================
-def parse_gemini_response(response_text: str) -> Tuple[str, float]:
-    """Extract classification label and confidence from Gemini JSON response."""
+def parse_gemini_response(response_text: str) -> Tuple[str, float, List[str]]:
+    """Extract classification label, confidence, and departments from Gemini JSON response."""
     # Strip markdown code fences if present
     cleaned = response_text.strip()
     if cleaned.startswith("```"):
@@ -176,45 +214,55 @@ def parse_gemini_response(response_text: str) -> Tuple[str, float]:
     try:
         data = json.loads(cleaned)
     except json.JSONDecodeError:
-        # JSON mode (response_mime_type="application/json") should prevent this,
-        # but if it happens, log and return unclassified rather than using
-        # a fragile regex that can't handle nested braces.
         logger.warning(f"Could not parse Gemini response as JSON: {response_text[:200]}")
-        return "unclassified", 0.0
+        return "unclassified", 0.0, []
 
     label = data.get("classification", "").lower().strip()
     confidence = float(data.get("confidence", 0.0))
     reason = data.get("reason", "")
+    departments = data.get("departments", [])
+
+    # Normalize departments: ensure list of non-empty strings
+    if isinstance(departments, list):
+        departments = [d.strip() for d in departments if isinstance(d, str) and d.strip()]
+        if len(departments) > 5:
+            logger.info(f"AI returned {len(departments)} departments, truncating to 5 max.")
+            departments = departments[:5]
+    else:
+        departments = []
 
     if label not in VALID_LABELS:
         logger.warning(f"Invalid label from Gemini: '{label}' (reason: {reason})")
-        return "unclassified", 0.0
+        return "unclassified", 0.0, departments
 
     threshold = _CONFIDENCE_THRESHOLD
     if confidence < threshold:
         logger.info(f"Confidence {confidence:.2f} below threshold {threshold} — marking unclassified")
-        return "unclassified", confidence
+        return "unclassified", confidence, departments
 
-    logger.info(f"Gemini classification: {label} (confidence={confidence:.2f}, reason={reason})")
-    return label, confidence
+    logger.info(f"Gemini classification: {label} (confidence={confidence:.2f}, reason={reason}), departments={departments}")
+    return label, confidence, departments
 
 
 # ============================================
 # Core Classification Function (async)
 # ============================================
-async def classify_text_with_gemini(text: str) -> Tuple[str, float]:
+async def classify_text_with_gemini(
+    text: str, department_names: List[str] | None = None
+) -> Tuple[str, float, List[str]]:
     """Classify preprocessed text using Gemini Flash 2.5 with retry logic.
 
+    Returns (label, confidence, departments).
     Uses asyncio.Semaphore to limit concurrent API calls (REVIEW FIX P1-REVIEW-7)."""
     global _api_semaphore
     if _api_semaphore is None:
         _api_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GEMINI_CALLS)
 
     if not text.strip():
-        return "unclassified", 0.0
+        return "unclassified", 0.0, []
 
     async with _api_semaphore:
-        prompt = CLASSIFICATION_PROMPT + text + "\n" + DOCUMENT_TEXT_DELIMITER
+        prompt = _build_prompt(text, department_names)
         timeout = int(os.getenv("CLASSIFICATION_REQUEST_TIMEOUT", str(DEFAULT_REQUEST_TIMEOUT)))
 
         model = _get_model()
@@ -262,7 +310,6 @@ async def classify_text_with_gemini(text: str) -> Tuple[str, float]:
                 raise ClassificationModelError(f"Gemini model does not support JSON mode: {e}") from e
             except (google_exceptions.GoogleAPIError, IOError, json.JSONDecodeError) as e:
                 # Narrow exception catch: only retry known transient/parseable errors.
-                # Avoids swallowing KeyboardInterrupt, SystemExit, asyncio.CancelledError.
                 last_error = f"Retryable error on attempt {attempt}: {e}"
                 last_error_type = "transient"
                 logger.error(last_error)
@@ -279,9 +326,12 @@ async def classify_text_with_gemini(text: str) -> Tuple[str, float]:
             raise RuntimeError(msg)
 
 
-async def classify_multimodal_with_gemini(text: str, image_bytes_list: list[bytes]) -> Tuple[str, float]:
+async def classify_multimodal_with_gemini(
+    text: str, image_bytes_list: list[bytes], department_names: List[str] | None = None
+) -> Tuple[str, float, List[str]]:
     """Classify document content using Gemini multimodal input (text + images).
 
+    Returns (label, confidence, departments).
     Reuses the same concurrency, timeout, and retry behavior as text-only classification.
     If no images are provided, falls back to text-only classification.
     """
@@ -290,12 +340,12 @@ async def classify_multimodal_with_gemini(text: str, image_bytes_list: list[byte
         _api_semaphore = asyncio.Semaphore(MAX_CONCURRENT_GEMINI_CALLS)
 
     if not text.strip() and not image_bytes_list:
-        return "unclassified", 0.0
+        return "unclassified", 0.0, []
     if not image_bytes_list:
-        return await classify_text_with_gemini(text)
+        return await classify_text_with_gemini(text, department_names)
 
     async with _api_semaphore:
-        prompt = CLASSIFICATION_PROMPT + text + "\n" + DOCUMENT_TEXT_DELIMITER
+        prompt = _build_prompt(text, department_names)
         timeout = int(os.getenv("CLASSIFICATION_REQUEST_TIMEOUT", str(DEFAULT_REQUEST_TIMEOUT)))
 
         model = _get_model()

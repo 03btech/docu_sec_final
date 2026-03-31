@@ -33,7 +33,7 @@ SEED_CONFIG = {
         "first_name": "System",
         "last_name": "Administrator",
         "role": "admin",
-        "department": "IT"
+        "department": "University Admin Office"
     },
     "users": [
         {
@@ -43,7 +43,7 @@ SEED_CONFIG = {
             "first_name": "John",
             "last_name": "Doe",
             "role": "user",
-            "department": "Engineering"
+            "department": "College of Engineering and Architecture"
         },
         {
             "username": "jane.smith",
@@ -52,7 +52,7 @@ SEED_CONFIG = {
             "first_name": "Jane",
             "last_name": "Smith",
             "role": "user",
-            "department": "HR"
+            "department": "HRMO"
         },
         {
             "username": "bob.wilson",
@@ -61,7 +61,7 @@ SEED_CONFIG = {
             "first_name": "Bob",
             "last_name": "Wilson",
             "role": "user",
-            "department": "Finance"
+            "department": "Finance Office"
         },
         {
             "username": "alice.brown",
@@ -70,7 +70,7 @@ SEED_CONFIG = {
             "first_name": "Alice",
             "last_name": "Brown",
             "role": "user",
-            "department": "Marketing"
+            "department": "University Registrar"
         },
         {
             "username": "charlie.davis",
@@ -79,18 +79,19 @@ SEED_CONFIG = {
             "first_name": "Charlie",
             "last_name": "Davis",
             "role": "user",
-            "department": "Engineering"
+            "department": "College of computing and informatics"
         }
     ],
     "departments": [
-        "IT",
-        "Engineering",
-        "HR",
-        "Finance",
-        "Marketing",
-        "Operations",
-        "Legal",
-        "Executive"
+        "HRMO",
+        "University Registrar",
+        "University Admin Office",
+        "Finance Office",
+        "College of Education",
+        "College of computing and informatics",
+        "College of Engineering and Architecture",
+        "College of Art and Sciences",
+        "College of Industrial Tech"
     ]
 }
 

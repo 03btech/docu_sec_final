@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, TIMESTAMP, Text, Enum, JSON
+from sqlalchemy import Column, Integer, String, ForeignKey, TIMESTAMP, Text, Enum, JSON, UniqueConstraint
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from .database import Base
@@ -77,6 +77,7 @@ class Document(Base):
 
     owner = relationship("User", back_populates="documents")
     document_permissions = relationship("DocumentPermission", back_populates="document", cascade="all, delete-orphan")
+    document_departments = relationship("DocumentDepartment", back_populates="document", cascade="all, delete-orphan")
     access_logs = relationship("AccessLog", back_populates="document")
 
 class DocumentPermission(Base):
@@ -113,3 +114,20 @@ class SecurityLog(Base):
     details = Column('metadata', JSON, nullable=True)
 
     user = relationship("User", back_populates="security_logs")
+
+class DocumentDepartment(Base):
+    """Many-to-many: AI-inferred (or manually set) department tags for documents.
+
+    A single document can be tagged to multiple departments based on its content.
+    The source field tracks whether the tag was inferred by AI or set manually.
+    """
+    __tablename__ = "document_departments"
+    __table_args__ = (UniqueConstraint('document_id', 'department_id', name='uq_document_departments'),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    department_id = Column(Integer, ForeignKey("departments.id", ondelete="CASCADE"), nullable=False)
+    source = Column(Enum(ClassificationSource), default=ClassificationSource.ai, nullable=False)
+
+    document = relationship("Document", back_populates="document_departments")
+    department = relationship("Department")

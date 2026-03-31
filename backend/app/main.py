@@ -95,6 +95,50 @@ async def lifespan(app: FastAPI):
             ON documents (classification_status);
         """))
 
+        # Document departments: AI-inferred department tagging (many-to-many)
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS document_departments (
+                id SERIAL PRIMARY KEY,
+                document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                department_id INTEGER NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+                source classificationsource NOT NULL DEFAULT 'ai',
+                UNIQUE (document_id, department_id)
+            );
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_document_departments_document_id
+            ON document_departments (document_id);
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_document_departments_department_id
+            ON document_departments (department_id);
+        """))
+
+        # Add explicit unique constraint for ON CONFLICT clause
+        await conn.execute(text("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'uq_document_departments'
+                ) THEN
+                    ALTER TABLE document_departments ADD CONSTRAINT uq_document_departments UNIQUE (document_id, department_id);
+                END IF;
+            END $$;
+        """))
+
+        # Backfill: tag existing documents with their owner's department (one-time, idempotent)
+        await conn.execute(text("""
+            INSERT INTO document_departments (document_id, department_id, source)
+            SELECT d.id, u.department_id, 'manual'
+            FROM documents d
+            JOIN users u ON d.owner_id = u.id
+            WHERE u.department_id IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM document_departments dd
+                  WHERE dd.document_id = d.id
+              )
+            ON CONFLICT (document_id, department_id) DO NOTHING;
+        """))
+
         # Preserve access logs when documents are deleted (audit trail)
         await conn.execute(text(
             "ALTER TABLE access_logs ADD COLUMN IF NOT EXISTS document_name VARCHAR(255);"

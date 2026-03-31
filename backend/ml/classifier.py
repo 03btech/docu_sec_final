@@ -276,20 +276,23 @@ async def extract_document_text_async(file_path: str) -> Union[str, List[str]]:
         return ""
 
 
-async def classify_extracted_text_async(text_or_chunks: Union[str, List[str]], file_path: str) -> str:
+async def classify_extracted_text_async(
+    text_or_chunks: Union[str, List[str]], file_path: str,
+    department_names: List[str] | None = None
+) -> tuple[str, List[str]]:
     """Classify extracted text via Gemini — native async function.
 
     Called by the background pipeline AFTER setting 'classifying' status.
     Accepts either a single string or a list of chunk strings (from large PDFs).
     For chunks, classifies each independently and takes the highest-security label.
+    Department tags are merged (union) across all chunks.
+
+    Returns:
+        (classification_label, list_of_department_names)
 
     Exceptions from classify_text_with_gemini (API failures, auth errors) are NOT
     caught here — they propagate to the pipeline's except block, which sets
     classification_status = 'failed' with the error message.
-
-    ⚠️ OVER-CLASSIFICATION NOTE: For chunked documents, the highest-security label
-    from ANY chunk wins (single-chunk veto). This is intentional (err on security).
-    Per-chunk results are logged at INFO level for admin review.
     """
     ext = os.path.splitext(file_path)[1].lower()
 
@@ -310,12 +313,15 @@ async def classify_extracted_text_async(text_or_chunks: Union[str, List[str]], f
 
         page_images = await asyncio.to_thread(extract_pdf_page_images, file_path)
         if page_images:
-            label, confidence = await classify_multimodal_with_gemini(combined_text, page_images)
+            label, confidence, departments = await classify_multimodal_with_gemini(
+                combined_text, page_images, department_names
+            )
             logger.info(
                 f"Document {os.path.basename(file_path)} → '{label}' "
-                f"(confidence={confidence:.3f}, pages_as_images={len(page_images)})"
+                f"(confidence={confidence:.3f}, pages_as_images={len(page_images)}, "
+                f"departments={departments})"
             )
-            return label
+            return label, departments
 
         if not combined_text.strip():
             raise ValueError(
@@ -329,6 +335,7 @@ async def classify_extracted_text_async(text_or_chunks: Union[str, List[str]], f
         # Multiple chunks from a large PDF
         best_label = "unclassified"
         best_confidence = 0.0
+        all_departments: set[str] = set()
 
         for i, chunk_text in enumerate(text_or_chunks):
             # ⚠️ REVIEW FIX P2-REVIEW-11: Per-chunk char limit.
@@ -338,20 +345,24 @@ async def classify_extracted_text_async(text_or_chunks: Union[str, List[str]], f
                     f"({len(chunk_text)} chars). Truncating."
                 )
                 chunk_text = chunk_text[:MAX_TEXT_CHARS]
-            label, confidence = await classify_text_with_gemini(chunk_text)
-            logger.info(f"Chunk {i+1}/{len(text_or_chunks)} → '{label}' (confidence={confidence:.3f})")
+            label, confidence, departments = await classify_text_with_gemini(
+                chunk_text, department_names
+            )
+            logger.info(f"Chunk {i+1}/{len(text_or_chunks)} → '{label}' (confidence={confidence:.3f}, departments={departments})")
+            all_departments.update(departments)
 
             if SECURITY_RANK.get(label, 0) > SECURITY_RANK.get(best_label, 0):
                 best_label = label
                 best_confidence = confidence
 
-        logger.info(f"Document {os.path.basename(file_path)} → '{best_label}' (confidence={best_confidence:.3f})")
-        return best_label
+        merged_depts = list(all_departments)
+        logger.info(f"Document {os.path.basename(file_path)} → '{best_label}' (confidence={best_confidence:.3f}, departments={merged_depts})")
+        return best_label, merged_depts
     else:
         # Single text string
         if not text_or_chunks:
             logger.warning(f"No text to classify for {file_path}")
-            return "unclassified"
+            return "unclassified", []
 
         # P1-7 FIX: Token limit guard for non-PDF files (DOCX, TXT).
         if len(text_or_chunks) > MAX_TEXT_CHARS:
@@ -361,6 +372,8 @@ async def classify_extracted_text_async(text_or_chunks: Union[str, List[str]], f
             )
             text_or_chunks = text_or_chunks[:MAX_TEXT_CHARS]
 
-        label, confidence = await classify_text_with_gemini(text_or_chunks)
-        logger.info(f"Document {os.path.basename(file_path)} → '{label}' (confidence={confidence:.3f})")
-        return label
+        label, confidence, departments = await classify_text_with_gemini(
+            text_or_chunks, department_names
+        )
+        logger.info(f"Document {os.path.basename(file_path)} → '{label}' (confidence={confidence:.3f}, departments={departments})")
+        return label, departments

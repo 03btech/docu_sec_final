@@ -47,6 +47,7 @@ class ClassificationBadge(QWidget):
     def setup_ui(self):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)  # No padding
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         # Determine badge text and colors based on classification_status
         badge_text, text_color, bg_color, tooltip = self._resolve_badge()
@@ -58,7 +59,7 @@ class ClassificationBadge(QWidget):
             QLabel {{
                 background-color: {bg_color};
                 color: {text_color};
-                border-radius: 10px;
+                border-radius: 12px;
                 padding: 6px 14px;
                 font-size: 11px;
                 font-weight: bold;
@@ -67,6 +68,7 @@ class ClassificationBadge(QWidget):
         if tooltip:
             badge.setToolTip(tooltip)
         
+        layout.addStretch()
         layout.addWidget(badge)
         layout.addStretch()
 
@@ -100,6 +102,95 @@ class ClassificationBadge(QWidget):
             self.CLASSIFICATION_COLORS['unclassified']
         )
         return (self.classification.upper(), text_color, bg_color, '')
+
+
+class DepartmentBadges(QWidget):
+    """Widget that renders 1-N department name pills in a horizontal flow.
+
+    Shows compact colored badges for each AI-inferred department tag.
+    If no departments: shows '—' in muted gray.
+    If classification is in progress: shows 'Pending...' in gray.
+    """
+
+    BADGE_COLORS = [
+        ('#0ea5e9', '#e0f2fe'),   # Sky blue
+        ('#8b5cf6', '#ede9fe'),   # Violet
+        ('#f97316', '#fff7ed'),   # Orange
+        ('#14b8a6', '#ccfbf1'),   # Teal
+        ('#ec4899', '#fce7f3'),   # Pink
+        ('#64748b', '#f1f5f9'),   # Slate
+    ]
+
+    def __init__(self, departments: list, classification_status: str = 'completed', parent=None):
+        super().__init__(parent)
+        self.departments = departments or []
+        self.classification_status = classification_status or 'completed'
+        self.setMinimumHeight(40)
+        self.setup_ui()
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(4, 4, 4, 4)
+        main_layout.setSpacing(6)
+        main_layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        # In-progress states
+        if self.classification_status in ('queued', 'extracting_text', 'classifying'):
+            pending = QLabel('Pending...')
+            pending.setStyleSheet("""
+                QLabel {
+                    color: #9ca3af;
+                    font-size: 11px;
+                    font-style: italic;
+                }
+            """)
+            main_layout.addWidget(pending, alignment=Qt.AlignmentFlag.AlignHCenter)
+            return
+
+        # Extract valid department names and their original indices for color consistency
+        valid_depts = []
+        for i, dept in enumerate(self.departments):
+            dept_name = dept.get('department_name', '') if isinstance(dept, dict) else str(dept)
+            if dept_name:
+                valid_depts.append((dept_name, i))
+
+        # No valid departments tagged
+        if not valid_depts:
+            empty = QLabel('—')
+            empty.setStyleSheet("""
+                QLabel {
+                    color: #d1d5db;
+                    font-size: 13px;
+                }
+            """)
+            main_layout.addWidget(empty, alignment=Qt.AlignmentFlag.AlignHCenter)
+            return
+
+        # Render department badges stacked 2 per row
+        ITEMS_PER_ROW = 2
+        for i in range(0, len(valid_depts), ITEMS_PER_ROW):
+            row_layout = QHBoxLayout()
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(6)
+            row_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            
+            row_depts = valid_depts[i:i+ITEMS_PER_ROW]
+            for dept_name, original_idx in row_depts:
+                text_color, bg_color = self.BADGE_COLORS[original_idx % len(self.BADGE_COLORS)]
+                badge = QLabel(dept_name)
+                badge.setStyleSheet(f"""
+                    QLabel {{
+                        background-color: {bg_color};
+                        color: {text_color};
+                        border-radius: 10px;
+                        padding: 5px 10px;
+                        font-size: 9px;
+                        font-weight: 600;
+                    }}
+                """)
+                row_layout.addWidget(badge)
+            
+            main_layout.addLayout(row_layout)
 
 
 class ActionMenuButton(QPushButton):
@@ -237,7 +328,7 @@ class ModernDocumentTable(QTableWidget):
         
         # Default headers if none provided
         if headers is None:
-            headers = ["Document", "Classification", "Owner", "Upload Date", ""]
+            headers = ["Document", "Security Level", "Relevant Depts.", "Owner", "Upload Date", ""]
         
         self.headers = headers
         self.setup_ui()
@@ -263,25 +354,28 @@ class ModernDocumentTable(QTableWidget):
         v_header = self.verticalHeader()
         if v_header:
             v_header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-            v_header.setDefaultSectionSize(60)
+            v_header.setDefaultSectionSize(75)
         
         # Configure column behavior
         header = self.horizontalHeader()
         if header:
+            header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
             # Document name - stretch
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-            # Classification - fixed width
+            # Security Level - fixed width
             header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
             self.setColumnWidth(1, 150)
+            # Relevant Depts. - natural sizing for departments
+            header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
             # Owner - interactive
-            header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-            self.setColumnWidth(2, 150)
-            # Date - interactive
             header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
-            self.setColumnWidth(3, 120)
+            self.setColumnWidth(3, 150)
+            # Date - interactive
+            header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+            self.setColumnWidth(4, 120)
             # Actions - fixed width
-            header.setSectionResizeMode(4, QHeaderView.ResizeMode.Fixed)
-            self.setColumnWidth(4, 60)
+            header.setSectionResizeMode(5, QHeaderView.ResizeMode.Fixed)
+            self.setColumnWidth(5, 60)
         
         # Apply modern styling
         self.setStyleSheet("""
@@ -324,7 +418,7 @@ class ModernDocumentTable(QTableWidget):
         
         for row, doc in enumerate(documents):
             # Set row height explicitly for each row
-            self.setRowHeight(row, 60)
+            self.setRowHeight(row, 75)
             
             # Column 0: Document name with file icon
             doc_widget = self._create_document_cell(doc)
@@ -338,8 +432,13 @@ class ModernDocumentTable(QTableWidget):
                 classification, classification_status, classification_error
             )
             self.setCellWidget(row, 1, badge_widget)
+
+            # Column 2: Department badges
+            departments = doc.get('departments', [])
+            dept_widget = DepartmentBadges(departments, classification_status)
+            self.setCellWidget(row, 2, dept_widget)
             
-            # Column 2: Owner
+            # Column 3: Owner
             owner = doc.get('owner')
             owner_text = ''
             if owner and isinstance(owner, dict):
@@ -349,19 +448,19 @@ class ModernDocumentTable(QTableWidget):
             
             owner_item = QTableWidgetItem(owner_text)
             owner_item.setForeground(QColor('#6b7280'))
-            owner_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter)
-            self.setItem(row, 2, owner_item)
+            owner_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.setItem(row, 3, owner_item)
             
-            # Column 3: Date
+            # Column 4: Date
             date_str = doc.get('upload_date', '')
             if date_str:
                 date_str = date_str.split('T')[0]
             date_item = QTableWidgetItem(date_str)
             date_item.setForeground(QColor('#6b7280'))
-            date_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter)
-            self.setItem(row, 3, date_item)
+            date_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.setItem(row, 4, date_item)
             
-            # Column 4: Action menu button
+            # Column 5: Action menu button
             action_button = ActionMenuButton(action_callbacks, row)
             
             # Center the button in cell
@@ -372,7 +471,7 @@ class ModernDocumentTable(QTableWidget):
             button_layout.addWidget(action_button)
             button_layout.addStretch()
             
-            self.setCellWidget(row, 4, button_container)
+            self.setCellWidget(row, 5, button_container)
     
     def set_documents_with_row_callbacks(self, documents: list, callback_getter):
         """
@@ -386,7 +485,7 @@ class ModernDocumentTable(QTableWidget):
         
         for row, doc in enumerate(documents):
             # Set row height explicitly for each row
-            self.setRowHeight(row, 60)
+            self.setRowHeight(row, 75)
             
             # Column 0: Document name with file icon
             doc_widget = self._create_document_cell(doc)
@@ -400,8 +499,13 @@ class ModernDocumentTable(QTableWidget):
                 classification, classification_status, classification_error
             )
             self.setCellWidget(row, 1, badge_widget)
+
+            # Column 2: Department badges
+            departments = doc.get('departments', [])
+            dept_widget = DepartmentBadges(departments, classification_status)
+            self.setCellWidget(row, 2, dept_widget)
             
-            # Column 2: Owner
+            # Column 3: Owner
             owner = doc.get('owner')
             owner_text = ''
             if owner and isinstance(owner, dict):
@@ -411,19 +515,19 @@ class ModernDocumentTable(QTableWidget):
             
             owner_item = QTableWidgetItem(owner_text)
             owner_item.setForeground(QColor('#6b7280'))
-            owner_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter)
-            self.setItem(row, 2, owner_item)
+            owner_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.setItem(row, 3, owner_item)
             
-            # Column 3: Date
+            # Column 4: Date
             date_str = doc.get('upload_date', '')
             if date_str:
                 date_str = date_str.split('T')[0]
             date_item = QTableWidgetItem(date_str)
             date_item.setForeground(QColor('#6b7280'))
-            date_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter)
-            self.setItem(row, 3, date_item)
+            date_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.setItem(row, 4, date_item)
             
-            # Column 4: Action menu button with row-specific callbacks
+            # Column 5: Action menu button with row-specific callbacks
             action_callbacks = callback_getter(row)
             action_button = ActionMenuButton(action_callbacks, row)
             
@@ -435,7 +539,7 @@ class ModernDocumentTable(QTableWidget):
             button_layout.addWidget(action_button)
             button_layout.addStretch()
             
-            self.setCellWidget(row, 4, button_container)
+            self.setCellWidget(row, 5, button_container)
     
     def _create_document_cell(self, doc: dict) -> QWidget:
         """Create a widget for document name with icon"""
@@ -452,6 +556,8 @@ class ModernDocumentTable(QTableWidget):
         icon_label = QLabel()
         icon_label.setPixmap(file_icon.pixmap(QSize(28, 28)))  # Larger icon
         icon_label.setFixedSize(28, 28)
+        
+        layout.addStretch()
         layout.addWidget(icon_label)
         
         # File name label

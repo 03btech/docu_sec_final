@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy import func, select, text, update
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import FileResponse
 
@@ -26,6 +27,54 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "/app/uploaded_files"))
+
+
+def _serialize_doc(doc) -> dict:
+    """Convert ORM Document to dict with resolved department names.
+
+    Pydantic's from_attributes=True can't auto-resolve nested relationship
+    fields like DocumentDepartment.department.name, so we do it manually.
+    """
+    data = {
+        "id": doc.id,
+        "filename": doc.filename,
+        "file_path": doc.file_path,
+        "owner_id": doc.owner_id,
+        "upload_date": doc.upload_date,
+        "classification": doc.classification,
+        "classification_status": doc.classification_status,
+        "classification_error": doc.classification_error,
+        "classification_source": doc.classification_source,
+    }
+    if hasattr(doc, 'owner') and doc.owner:
+        data["owner"] = {
+            "id": doc.owner.id,
+            "username": doc.owner.username,
+            "email": doc.owner.email,
+            "first_name": doc.owner.first_name,
+            "last_name": doc.owner.last_name,
+            "role": doc.owner.role,
+            "department_id": doc.owner.department_id,
+            "created_at": doc.owner.created_at,
+        }
+    if hasattr(doc, 'document_departments'):
+        data["departments"] = [
+            {
+                "id": dd.id,
+                "department_id": dd.department_id,
+                "department_name": dd.department.name if dd.department else "",
+                "source": dd.source,
+            }
+            for dd in doc.document_departments
+        ]
+    else:
+        data["departments"] = []
+    return data
+
+
+def _serialize_docs(docs) -> list:
+    """Convert a list of ORM Document objects to serializable dicts."""
+    return [_serialize_doc(d) for d in docs]
 
 # Daily upload quota per user (cost guardrail for Gemini API calls)
 MAX_UPLOADS_PER_USER_PER_DAY = int(os.getenv("MAX_UPLOADS_PER_USER_PER_DAY", "50"))
@@ -79,6 +128,7 @@ async def classify_document_pipeline(doc_id: int, file_path: str):
 
     Creates its own AsyncSession (request-scoped session is closed by the time
     BackgroundTasks run). Uses atomic CAS to prevent duplicate pipelines.
+    Now also infers department tags from document content via Gemini.
     """
     run_id = uuid4().hex[:8]
     logger.info("[run=%s] Starting pipeline for doc %d: %s", run_id, doc_id, file_path)
@@ -103,6 +153,10 @@ async def classify_document_pipeline(doc_id: int, file_path: str):
                 logger.info("[run=%s] Doc %d: already past 'queued', skipping", run_id, doc_id)
                 return
 
+            # Fetch department names for AI department inference
+            dept_result = await db.execute(select(models.Department.name))
+            department_names = [row[0] for row in dept_result.all()]
+
             # Stage 1: Text extraction
             text_or_chunks = await extract_document_text_async(file_path)
             if not text_or_chunks:
@@ -121,11 +175,13 @@ async def classify_document_pipeline(doc_id: int, file_path: str):
                     file_path,
                 )
 
-            # Stage 2: Gemini classification
+            # Stage 2: Gemini classification + department inference
             await _update_status(db, doc_id, models.ClassificationStatus.classifying)
-            classification_str = await classify_extracted_text_async(text_or_chunks, file_path)
+            classification_str, inferred_departments = await classify_extracted_text_async(
+                text_or_chunks, file_path, department_names
+            )
 
-            # Stage 3: Done
+            # Stage 3: Done — save classification and department tags
             classification = models.ClassificationLevel(classification_str)
             result = await db.execute(
                 select(models.Document).where(models.Document.id == doc_id)
@@ -142,6 +198,35 @@ async def classify_document_pipeline(doc_id: int, file_path: str):
                     )
                 else:
                     document.classification_error = None
+
+                # Save AI-inferred department tags
+                if inferred_departments:
+                    # Build case-insensitive lookup of valid departments
+                    dept_all = await db.execute(select(models.Department))
+                    dept_map = {d.name.lower(): d.id for d in dept_all.scalars().all()}
+
+                    for dept_name in inferred_departments:
+                        dept_id = dept_map.get(dept_name.lower())
+                        if dept_id:
+                            # Check for existing tag (avoid duplicates)
+                            existing = await db.execute(
+                                select(models.DocumentDepartment).where(
+                                    models.DocumentDepartment.document_id == doc_id,
+                                    models.DocumentDepartment.department_id == dept_id,
+                                )
+                            )
+                            if not existing.scalars().first():
+                                db.add(models.DocumentDepartment(
+                                    document_id=doc_id,
+                                    department_id=dept_id,
+                                    source=models.ClassificationSource.ai,
+                                ))
+                        else:
+                            logger.warning(
+                                "[run=%s] AI returned unknown department '%s' for doc %d",
+                                run_id, dept_name, doc_id,
+                            )
+
                 await db.commit()
 
         except asyncio.CancelledError:
@@ -303,7 +388,7 @@ async def list_documents(
     current_user: models.User = Depends(get_current_user)
 ):
     documents = await crud.get_documents_for_user(db, current_user)
-    return documents
+    return _serialize_docs(documents)
 
 @router.get("/documents/shared-with-me", response_model=list[schemas.Document])
 async def list_shared_documents(
@@ -311,7 +396,7 @@ async def list_shared_documents(
     current_user: models.User = Depends(get_current_user)
 ):
     documents = await crud.get_shared_documents_for_user(db, current_user.id)
-    return documents
+    return _serialize_docs(documents)
 
 @router.get("/documents/owned-by-me", response_model=list[schemas.Document])
 async def list_owned_documents(
@@ -319,7 +404,7 @@ async def list_owned_documents(
     current_user: models.User = Depends(get_current_user)
 ):
     documents = await crud.get_documents_by_owner(db, current_user.id)
-    return documents
+    return _serialize_docs(documents)
 
 @router.get("/documents/department", response_model=list[schemas.Document])
 async def list_department_documents(
@@ -329,7 +414,7 @@ async def list_department_documents(
     if not current_user.department_id:
         return []
     documents = await crud.get_department_documents(db, current_user.department_id, current_user.id)
-    return documents
+    return _serialize_docs(documents)
 
 @router.get("/documents/{doc_id}/classification-status",
             response_model=schemas.ClassificationStatusResponse)
@@ -462,7 +547,11 @@ async def update_document(
     if not allowed:
         raise HTTPException(status_code=403, detail=reason)
 
-    result = await db.execute(select(models.Document).where(models.Document.id == doc_id))
+    result = await db.execute(
+        select(models.Document)
+        .options(selectinload(models.Document.document_departments))
+        .where(models.Document.id == doc_id)
+    )
     document = result.scalars().first()
 
     # Detect manual classification change
@@ -474,27 +563,68 @@ async def update_document(
     document.filename = document_update.filename
     document.classification = new_classification
 
+    actions_taken = []
+
     if classification_changed:
         document.classification_source = models.ClassificationSource.manual
         document.classification_status = models.ClassificationStatus.completed
         document.classification_error = None
+        actions_taken.append(f'manual_classify:{old_classification.value}->{new_classification.value}')
+
+    # Update department tags if provided
+    if document_update.departments is not None:
+        new_dept_ids = set(document_update.departments)
+        current_dept_ids = {dd.department_id for dd in document.document_departments}
+
+        # Validate that the requested department IDs exist
+        if new_dept_ids:
+            valid_result = await db.execute(
+                select(models.Department.id).where(models.Department.id.in_(new_dept_ids))
+            )
+            valid_ids = {r[0] for r in valid_result.all()}
+            invalid_ids = new_dept_ids - valid_ids
+            if invalid_ids:
+                raise HTTPException(status_code=400, detail=f"Invalid department IDs: {invalid_ids}")
+
+        if current_dept_ids != new_dept_ids:
+            # Delete removed departments
+            to_remove = [dd for dd in document.document_departments if dd.department_id not in new_dept_ids]
+            for dd in to_remove:
+                await db.delete(dd)
+
+            # Add new departments
+            for dept_id in new_dept_ids - current_dept_ids:
+                db.add(models.DocumentDepartment(
+                    document_id=doc_id,
+                    department_id=dept_id,
+                    source=models.ClassificationSource.manual
+                ))
+            
+            actions_taken.append('manual_departments_update')
 
     await db.commit()
-    await db.refresh(document)
-
-    # Log action — distinguish metadata edits from manual reclassification
-    action = (
-        f'manual_classify:{old_classification.value}->{new_classification.value}'
-        if classification_changed
-        else 'edit_metadata'
+    
+    # Must requery with full relations for serialization
+    refresh_result = await db.execute(
+        select(models.Document)
+        .options(
+            selectinload(models.Document.owner),
+            selectinload(models.Document.document_departments).selectinload(models.DocumentDepartment.department),
+        )
+        .where(models.Document.id == doc_id)
+        .execution_options(populate_existing=True)
     )
+    document = refresh_result.scalars().first()
+
+    # Log actions
+    action_str = ','.join(actions_taken) if actions_taken else 'edit_metadata'
     await crud.create_access_log(db, schemas.AccessLogCreate(
         document_id=doc_id,
         user_id=current_user.id,
-        action=action
+        action=action_str
     ))
 
-    return document
+    return _serialize_doc(document)
 
 @router.delete("/documents/{doc_id}")
 async def delete_document(

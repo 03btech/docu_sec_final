@@ -85,6 +85,7 @@ class ManageSharingDialog(QDialog):
         # Column widths
         header = self.table.horizontalHeader()
         if header:
+            header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
             header.setSectionResizeMode(0, QHeaderView.ResizeMode.Fixed)
             header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
             header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
@@ -215,12 +216,14 @@ class ManageSharingDialog(QDialog):
             name = f"{user.get('first_name', '')} {user.get('last_name', '')}".strip()
             name_item = QTableWidgetItem(name)
             name_item.setForeground(QColor('#0f1016'))
+            name_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, 0, name_item)
             
             # Email
             email = user.get('email', '')
             email_item = QTableWidgetItem(email)
             email_item.setForeground(QColor('#6b7280'))
+            email_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.table.setItem(row, 1, email_item)
             
             # Permission dropdown

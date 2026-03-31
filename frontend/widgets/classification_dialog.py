@@ -1,20 +1,20 @@
 """
 Classification Correction Dialog
-Allows document owners to manually override the AI classification.
+Allows document owners to manually override the AI classification and department tags.
 """
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QPushButton, QFrame
+    QPushButton, QFrame, QScrollArea, QWidget, QCheckBox, QMessageBox
 )
 from PyQt6.QtCore import Qt
 import qtawesome as qta
 
 
 class ClassificationDialog(QDialog):
-    """Modal dialog for manually changing a document's classification level.
+    """Modal dialog for manually changing a document's classification level and department tags.
 
-    Returns the selected classification string ('public', 'internal', 'confidential')
-    via self.selected_classification after accept().
+    Returns the selected classification string via self.selected_classification 
+    and list of department IDs via self.selected_departments after accept().
     """
 
     CLASSIFICATIONS = [
@@ -23,12 +23,16 @@ class ClassificationDialog(QDialog):
         ("confidential", "Confidential", "#ef4444", "Restricted — explicit access only"),
     ]
 
-    def __init__(self, document: dict, parent=None):
+    def __init__(self, document: dict, api_client, parent=None):
         super().__init__(parent)
         self.document = document
+        self.api_client = api_client
         self.selected_classification = None
-        self.setWindowTitle("Change Classification")
-        self.setFixedSize(420, 300)
+        self.selected_departments = []
+        self.checkboxes = []  # Keep track of QCheckBox widgets
+        
+        self.setWindowTitle("Edit Document Metadata")
+        self.setFixedSize(450, 500)
         self.setModal(True)
         self.setup_ui()
 
@@ -44,7 +48,7 @@ class ClassificationDialog(QDialog):
         layout.setSpacing(16)
 
         # Header
-        header_label = QLabel("Change Classification")
+        header_label = QLabel("Edit Metadata")
         header_label.setStyleSheet("""
             QLabel {
                 font-size: 20px;
@@ -65,7 +69,7 @@ class ClassificationDialog(QDialog):
         current = self.document.get('classification', 'unclassified')
         source = self.document.get('classification_source', 'ai')
         source_text = "AI" if source == "ai" else "Manual"
-        current_label = QLabel(f"Current: {current.upper()}  (set by {source_text})")
+        current_label = QLabel(f"Current Level: {current.upper()}  (set by {source_text})")
         current_label.setStyleSheet("QLabel { font-size: 12px; color: #9ca3af; }")
         layout.addWidget(current_label)
 
@@ -76,7 +80,7 @@ class ClassificationDialog(QDialog):
         layout.addWidget(separator)
 
         # Classification selector
-        selector_label = QLabel("New classification:")
+        selector_label = QLabel("Security Level:")
         selector_label.setStyleSheet("QLabel { font-size: 14px; font-weight: 500; color: #374151; }")
         layout.addWidget(selector_label)
 
@@ -115,6 +119,87 @@ class ClassificationDialog(QDialog):
         self.combo.setCurrentIndex(current_index)
         layout.addWidget(self.combo)
 
+        # Spacer
+        layout.addSpacing(8)
+
+        # Departments section
+        dept_label = QLabel("Relevant Departments (Max 5):")
+        dept_label.setStyleSheet("QLabel { font-size: 14px; font-weight: 500; color: #374151; }")
+        layout.addWidget(dept_label)
+
+        # Scroll area for departments
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("""
+            QScrollArea {
+                border: 1px solid #d1d5db;
+                border-radius: 8px;
+                background-color: #f9fafb;
+            }
+            QScrollBar:vertical {
+                border: none;
+                background: #f3f4f6;
+                width: 10px;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:vertical {
+                background: #d1d5db;
+                min-height: 20px;
+                border-radius: 5px;
+            }
+        """)
+        
+        scroll_content = QWidget()
+        scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(12, 12, 12, 12)
+        scroll_layout.setSpacing(8)
+
+        # Current department IDs
+        current_depts = [d.get('department_id') for d in self.document.get('departments', [])]
+        
+        # Fetch departments from API
+        try:
+            departments = self.api_client.get_departments()
+            for dept in departments:
+                cb = QCheckBox(dept['name'])
+                cb.setProperty("dept_id", dept['id'])
+                cb.setStyleSheet("""
+                    QCheckBox {
+                        font-size: 13px;
+                        color: #4b5563;
+                        padding: 2px;
+                    }
+                    QCheckBox::indicator {
+                        width: 18px;
+                        height: 18px;
+                        border-radius: 4px;
+                        border: 1px solid #d1d5db;
+                        background-color: white;
+                    }
+                    QCheckBox::indicator:checked {
+                        background-color: #3b82f6;
+                        border: 1px solid #3b82f6;
+                        image: url(check.png); /* Fallback */
+                    }
+                """)
+                # Mark as checked if currently tagged
+                if dept['id'] in current_depts:
+                    cb.setChecked(True)
+                
+                # Connect signal to enforce max 5 limit
+                cb.toggled.connect(self._on_dept_toggled)
+                
+                scroll_layout.addWidget(cb)
+                self.checkboxes.append(cb)
+        except Exception as e:
+            error_lbl = QLabel(f"Could not load departments: {e}")
+            error_lbl.setStyleSheet("color: red;")
+            scroll_layout.addWidget(error_lbl)
+
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_content)
+        layout.addWidget(scroll)
+
         layout.addStretch()
 
         # Buttons
@@ -140,7 +225,7 @@ class ClassificationDialog(QDialog):
         cancel_btn.clicked.connect(self.reject)
         button_layout.addWidget(cancel_btn)
 
-        save_btn = QPushButton("Save Classification")
+        save_btn = QPushButton("Save Changes")
         save_btn.setStyleSheet("""
             QPushButton {
                 background-color: #3b82f6;
@@ -163,6 +248,19 @@ class ClassificationDialog(QDialog):
 
         layout.addLayout(button_layout)
 
+    def _on_dept_toggled(self, checked):
+        """Enforce maximum limit of 5 departments."""
+        if checked:
+            checked_count = sum(1 for cb in self.checkboxes if cb.isChecked())
+            if checked_count > 5:
+                # Uncheck the box that triggered this
+                sender = self.sender()
+                sender.setChecked(False)
+                QMessageBox.warning(self, "Limit Reached", "You can select a maximum of 5 departments.")
+
     def _on_save(self):
         self.selected_classification = self.combo.currentData()
+        self.selected_departments = [
+            cb.property("dept_id") for cb in self.checkboxes if cb.isChecked()
+        ]
         self.accept()

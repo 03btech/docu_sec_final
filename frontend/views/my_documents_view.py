@@ -79,23 +79,35 @@ class MyDocumentsView(BaseDocumentView):
                 QMessageBox.critical(self, "Retry Failed", f"Could not retry classification: {e}")
 
     def change_classification(self, row):
-        """Open dialog to manually change a document's classification."""
+        """Open dialog to manually change a document's classification and department tags."""
         doc = self.documents[row]
-        dialog = ClassificationDialog(doc, self)
+        dialog = ClassificationDialog(doc, self.api_client, self)
         if dialog.exec():
             new_classification = dialog.selected_classification
-            if new_classification and new_classification != doc.get('classification'):
+            new_departments = dialog.selected_departments
+            
+            # Check if either classification or departments changed
+            current_classification = doc.get('classification')
+            current_departments = [d.get('department_id') for d in doc.get('departments', [])]
+            
+            if new_classification != current_classification or set(new_departments) != set(current_departments):
                 try:
-                    self.api_client.update_document(
-                        doc['id'], doc.get('filename', ''), new_classification
+                    success = self.api_client.update_document(
+                        doc['id'], doc.get('filename', ''), new_classification, new_departments
                     )
-                    QMessageBox.information(
-                        self, "Classification Updated",
-                        f"Classification changed to {new_classification.upper()}."
-                    )
-                    self.load_documents()
+                    if success:
+                        QMessageBox.information(
+                            self, "Metadata Updated",
+                            "Document classification and department tags updated successfully."
+                        )
+                        self.load_documents()
+                    else:
+                        QMessageBox.critical(
+                            self, "Update Failed",
+                            "Could not update document metadata on the server."
+                        )
                 except Exception as e:
                     QMessageBox.critical(
                         self, "Update Failed",
-                        f"Could not update classification: {e}"
+                        f"Could not update document metadata: {e}"
                     )

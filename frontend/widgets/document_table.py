@@ -18,6 +18,7 @@ class DocumentTable(QTableWidget):
 
         header = self.horizontalHeader()
         if header:
+            header.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
             header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
             header.setSectionResizeMode(len(self.headers) - 1, QHeaderView.ResizeMode.ResizeToContents)
 
@@ -25,7 +26,9 @@ class DocumentTable(QTableWidget):
         self.setRowCount(len(documents))
         for row, doc in enumerate(documents):
             # Skip ID column - start from filename
-            self.setItem(row, 0, QTableWidgetItem(doc.get('filename', '')))
+            doc_item = QTableWidgetItem(doc.get('filename', ''))
+            doc_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.setItem(row, 0, doc_item)
 
             # Classification column - status-aware display
             classification = doc.get('classification', '')
@@ -46,18 +49,22 @@ class DocumentTable(QTableWidget):
                 class_item.setToolTip('Classification completed but result is unclassified')
             else:
                 class_item = QTableWidgetItem(classification)
+            class_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self.setItem(row, 1, class_item)
             
             owner = doc.get('owner')
             if owner and isinstance(owner, dict):
-                username = owner.get('username', '')
-                self.setItem(row, 2, QTableWidgetItem(username))
+                owner_item = QTableWidgetItem(owner.get('username', ''))
             elif owner:
-                self.setItem(row, 2, QTableWidgetItem(str(owner)))
+                owner_item = QTableWidgetItem(str(owner))
             else:
-                self.setItem(row, 2, QTableWidgetItem(''))
+                owner_item = QTableWidgetItem('')
+            owner_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.setItem(row, 2, owner_item)
 
-            self.setItem(row, 3, QTableWidgetItem(doc.get('upload_date', '').split('T')[0]))
+            date_item = QTableWidgetItem(doc.get('upload_date', '').split('T')[0])
+            date_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.setItem(row, 3, date_item)
 
             actions_widget = QWidget()
             actions_layout = QHBoxLayout(actions_widget)

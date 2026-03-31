@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from sqlalchemy.orm import selectinload
 from passlib.context import CryptContext
-from typing import Optional
+from typing import Optional, List
 from . import models, schemas
 
 # Use pbkdf2_sha256 instead of bcrypt to avoid the 72-byte limitation
@@ -145,10 +145,13 @@ async def get_all_users(db: AsyncSession, exclude_user_id: Optional[int] = None,
     return result.scalars().all()
 
 async def authorize_document_action(db: AsyncSession, document_id: int, current_user: models.User, required_action: str):
-    # Fetch document with owner - MUST use selectinload to avoid lazy loading issues
+    # Fetch document with owner and department tags
     result = await db.execute(
         select(models.Document)
-        .options(selectinload(models.Document.owner))
+        .options(
+            selectinload(models.Document.owner),
+            selectinload(models.Document.document_departments).selectinload(models.DocumentDepartment.department),
+        )
         .where(models.Document.id == document_id)
     )
     document = result.scalars().first()
@@ -160,12 +163,15 @@ async def authorize_document_action(db: AsyncSession, document_id: int, current_
     current_user_dept = current_user.department_id
     owner_dept = owner.department_id
 
+    # Build set of department IDs tagged on this document
+    doc_dept_ids = {dd.department_id for dd in document.document_departments}
+
     # Check permissions based on classification and action
     classification = document.classification
 
     print(f"🔍 AUTH DEBUG: Doc={document_id}, Classification={classification.value}, Action={required_action}")
     print(f"🔍 AUTH DEBUG: Current User={current_user.id}, Dept={current_user_dept}")
-    print(f"🔍 AUTH DEBUG: Owner={owner.id}, Dept={owner_dept}")
+    print(f"🔍 AUTH DEBUG: Owner={owner.id}, Dept={owner_dept}, Doc Depts={doc_dept_ids}")
 
     if required_action == 'view':
         if classification == models.ClassificationLevel.public:
@@ -173,18 +179,20 @@ async def authorize_document_action(db: AsyncSession, document_id: int, current_
             return True, None
         elif classification == models.ClassificationLevel.internal:
             print(f"🔍 AUTH: INTERNAL document check")
-            print(f"   Same dept? {current_user_dept == owner_dept}")
-            print(f"   Not owner? {current_user.id != owner.id}")
-            # FIXED: Internal documents should be viewable by same department OR owner
+            # Owner always has access
             if current_user.id == owner.id:
                 print(f"✅ AUTH: User is owner - access granted")
                 return True, None
-            elif current_user_dept == owner_dept:
-                print(f"✅ AUTH: Same department - access granted")
+            # Check if user's department is in the document's tagged departments
+            if current_user_dept and doc_dept_ids and current_user_dept in doc_dept_ids:
+                print(f"✅ AUTH: User's department is in document's tagged departments - access granted")
                 return True, None
-            else:
-                print(f"❌ AUTH: Different department and not owner - access denied")
-                return False, "Access denied: Internal document - requires same department"
+            # Fallback: if no department tags, check owner's department (backward compat)
+            if not doc_dept_ids and current_user_dept == owner_dept:
+                print(f"✅ AUTH: No department tags, falling back to owner dept match - access granted")
+                return True, None
+            print(f"❌ AUTH: Department mismatch and not owner - access denied")
+            return False, "Access denied: Internal document - requires matching department"
         elif classification in [models.ClassificationLevel.confidential, models.ClassificationLevel.unclassified]:
             print(f"🔍 AUTH: CONFIDENTIAL/UNCLASSIFIED document check")
             # Check if owner or has explicit permission
@@ -233,20 +241,43 @@ async def get_documents_for_user(db: AsyncSession, current_user: models.User):
     # Public documents
     result = await db.execute(
         select(models.Document)
-        .options(selectinload(models.Document.owner))
+        .options(
+            selectinload(models.Document.owner),
+            selectinload(models.Document.document_departments).selectinload(models.DocumentDepartment.department),
+        )
         .where(models.Document.classification == models.ClassificationLevel.public)
     )
     documents.extend(result.scalars().all())
 
-    # Internal documents from same department (not owner)
+    # Internal documents from document's tagged departments (not owner)
     if current_user.department_id:
         result = await db.execute(
             select(models.Document)
-            .options(selectinload(models.Document.owner))
+            .options(
+                selectinload(models.Document.owner),
+                selectinload(models.Document.document_departments).selectinload(models.DocumentDepartment.department),
+            )
+            .join(models.DocumentDepartment, models.Document.id == models.DocumentDepartment.document_id)
             .where(
                 models.Document.classification == models.ClassificationLevel.internal,
                 models.Document.owner_id != current_user.id,
-                models.Document.owner.has(models.User.department_id == current_user.department_id)
+                models.DocumentDepartment.department_id == current_user.department_id,
+            )
+        )
+        documents.extend(result.scalars().all())
+
+        # Fallback: internal docs with NO department tags but owner in same department
+        result = await db.execute(
+            select(models.Document)
+            .options(
+                selectinload(models.Document.owner),
+                selectinload(models.Document.document_departments).selectinload(models.DocumentDepartment.department),
+            )
+            .where(
+                models.Document.classification == models.ClassificationLevel.internal,
+                models.Document.owner_id != current_user.id,
+                models.Document.owner.has(models.User.department_id == current_user.department_id),
+                ~models.Document.document_departments.any(),
             )
         )
         documents.extend(result.scalars().all())
@@ -254,7 +285,10 @@ async def get_documents_for_user(db: AsyncSession, current_user: models.User):
     # Confidential/unclassified: owned or shared
     result = await db.execute(
         select(models.Document)
-        .options(selectinload(models.Document.owner))
+        .options(
+            selectinload(models.Document.owner),
+            selectinload(models.Document.document_departments).selectinload(models.DocumentDepartment.department),
+        )
         .where(
             models.Document.classification.in_([models.ClassificationLevel.confidential, models.ClassificationLevel.unclassified]),
             (models.Document.owner_id == current_user.id) |
@@ -275,7 +309,10 @@ async def get_documents_for_user(db: AsyncSession, current_user: models.User):
 async def get_documents_by_owner(db: AsyncSession, owner_id: int):
     result = await db.execute(
         select(models.Document)
-        .options(selectinload(models.Document.owner))
+        .options(
+            selectinload(models.Document.owner),
+            selectinload(models.Document.document_departments).selectinload(models.DocumentDepartment.department),
+        )
         .where(models.Document.owner_id == owner_id)
     )
     return result.scalars().all()
@@ -285,14 +322,36 @@ async def get_shared_documents_for_user(db: AsyncSession, user_id: int):
         select(models.Document)
         .join(models.DocumentPermission)
         .where(models.DocumentPermission.user_id == user_id)
-        .options(selectinload(models.Document.owner))
+        .options(
+            selectinload(models.Document.owner),
+            selectinload(models.Document.document_departments).selectinload(models.DocumentDepartment.department),
+        )
     )
     return result.scalars().all()
 
 async def get_department_documents(db: AsyncSession, department_id: int, user_id: int):
-    # Get all documents from users in the same department (including user's own)
-    # This includes: public, internal, and unclassified documents from department
+    # Get all documents tagged with this department (via AI-inferred DocumentDepartment)
+    # Only includes: public, internal, and unclassified documents
     # Confidential documents require explicit sharing permissions
+    result = await db.execute(
+        select(models.Document)
+        .join(models.DocumentDepartment, models.Document.id == models.DocumentDepartment.document_id)
+        .where(
+            models.DocumentDepartment.department_id == department_id,
+            models.Document.classification.in_([
+                models.ClassificationLevel.public,
+                models.ClassificationLevel.internal,
+                models.ClassificationLevel.unclassified
+            ])
+        )
+        .options(
+            selectinload(models.Document.owner),
+            selectinload(models.Document.document_departments).selectinload(models.DocumentDepartment.department),
+        )
+    )
+    dept_docs = list(result.scalars().all())
+
+    # Fallback: also include documents with NO department tags from users in the same department
     result = await db.execute(
         select(models.Document)
         .join(models.User, models.Document.owner_id == models.User.id)
@@ -302,11 +361,24 @@ async def get_department_documents(db: AsyncSession, department_id: int, user_id
                 models.ClassificationLevel.public,
                 models.ClassificationLevel.internal,
                 models.ClassificationLevel.unclassified
-            ])
+            ]),
+            ~models.Document.document_departments.any(),
         )
-        .options(selectinload(models.Document.owner))
+        .options(
+            selectinload(models.Document.owner),
+            selectinload(models.Document.document_departments).selectinload(models.DocumentDepartment.department),
+        )
     )
-    return result.scalars().all()
+    fallback_docs = result.scalars().all()
+
+    # Merge and deduplicate
+    seen = {d.id for d in dept_docs}
+    for doc in fallback_docs:
+        if doc.id not in seen:
+            dept_docs.append(doc)
+            seen.add(doc.id)
+
+    return dept_docs
 
 async def get_document(db: AsyncSession, doc_id: int):
     result = await db.execute(
@@ -330,9 +402,27 @@ async def user_can_access_document(db: AsyncSession, user_id: int, doc_id: int):
         return False
 
     if doc.classification == models.ClassificationLevel.internal:
+        # Check if user's department is in doc's tagged departments
+        if user.department_id:
+            dept_tag = await db.execute(
+                select(models.DocumentDepartment).where(
+                    models.DocumentDepartment.document_id == doc_id,
+                    models.DocumentDepartment.department_id == user.department_id,
+                )
+            )
+            if dept_tag.scalars().first():
+                return True
+        # Fallback: check owner's department (for untagged docs)
         owner = await db.get(models.User, doc.owner_id)
         if owner and owner.department_id == user.department_id:
-            return True
+            # Only use fallback if doc has no department tags
+            has_tags = await db.execute(
+                select(models.DocumentDepartment.id).where(
+                    models.DocumentDepartment.document_id == doc_id
+                ).limit(1)
+            )
+            if not has_tags.scalars().first():
+                return True
 
     # Check for explicit share
     perm_result = await db.execute(
