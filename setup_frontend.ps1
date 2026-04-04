@@ -120,8 +120,16 @@ $verificationTests = @{
 
 foreach ($test in $verificationTests.GetEnumerator()) {
     Write-Host "  Checking $($test.Key)..." -NoNewline
-    $result = python -c "$($test.Value)" 2>&1
-    if ($LASTEXITCODE -eq 0) {
+    $exitCode = 1
+    try {
+        $null = python -c "$($test.Value)" 2>$null
+        $exitCode = $LASTEXITCODE
+    }
+    catch {
+        $exitCode = 1
+    }
+
+    if ($exitCode -eq 0) {
         Write-Host " [OK]" -ForegroundColor Green
     }
     else {

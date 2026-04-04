@@ -395,6 +395,7 @@ class UserManagementView(QWidget):
         super().__init__()
         self.api_client = api_client
         self.users = []
+        self.departments = []
         self.setup_ui()
     
     def setup_ui(self):
@@ -664,6 +665,11 @@ class UserManagementView(QWidget):
     def populate_table(self):
         """Populate table with users."""
         self.users_table.setRowCount(0)
+        dept_lookup = {
+            dept.get('id'): dept.get('name', '')
+            for dept in self.departments
+            if isinstance(dept, dict)
+        }
         
         for user in self.users:
             row = self.users_table.rowCount()
@@ -710,7 +716,11 @@ class UserManagementView(QWidget):
             self.users_table.setItem(row, 2, name_item)
             
             # Column 3: Department
-            dept_name = user.get('department', {}).get('name', 'None') if user.get('department') else 'None'
+            dept_name = 'None'
+            if isinstance(user.get('department'), dict):
+                dept_name = user.get('department', {}).get('name', 'None') or 'None'
+            elif user.get('department_id') is not None:
+                dept_name = dept_lookup.get(user.get('department_id'), 'None') or 'None'
             dept_item = QTableWidgetItem(dept_name)
             dept_item.setForeground(QColor('#6b7280'))
             dept_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter)
@@ -906,6 +916,11 @@ class UserManagementView(QWidget):
 
             actions_layout.addStretch()
             self.dept_table.setCellWidget(row, 2, actions_widget)
+
+        # Users list response includes department_id; refresh user rows so names
+        # can be resolved from the latest departments list.
+        if hasattr(self, 'users'):
+            self.populate_table()
 
     def add_department(self):
         """Prompt for a department name and create it."""

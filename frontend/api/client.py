@@ -1,5 +1,5 @@
 import requests
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 class APIClient:
     def __init__(self, base_url: str = "http://localhost:8000"):
